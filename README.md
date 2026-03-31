@@ -4,6 +4,8 @@
 
 ## 快速开始
 
+### macOS / Linux
+
 ```bash
 # 安装
 pip install -e ".[dev]"
@@ -19,6 +21,29 @@ autoflow run dev-pipeline --input "实现一个快速排序函数"
 
 # 启动守护进程
 autoflow start --daemon
+```
+
+### Windows (PowerShell)
+
+```powershell
+# （可选）创建并激活虚拟环境
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# 安装
+pip install -e ".[dev]"
+
+# 配置 API Key（仅当前会话）
+$env:OPENAI_API_KEY = "your_api_key"
+
+# 查看系统状态
+python -m autoflow status
+
+# 运行工作流
+python -m autoflow run dev-pipeline --input "实现一个快速排序函数"
+
+# 启动守护进程（Ctrl+C 退出）
+python -m autoflow start --daemon
 ```
 
 ## 项目结构

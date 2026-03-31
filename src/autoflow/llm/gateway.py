@@ -52,6 +52,48 @@ class LLMGateway:
         # 关闭 litellm 自带的冗余日志
         litellm.suppress_debug_info = True
 
+    def _validate_model_config(self, config: ModelConfig | None) -> tuple[bool, str | None]:
+        """检查模型配置是否可用"""
+        if config is None:
+            return False, "missing_config"
+        if not config.provider or not config.provider.strip():
+            return False, "missing_provider"
+        if not config.name or not config.name.strip():
+            return False, "missing_model_name"
+        if config.max_tokens <= 0:
+            return False, "invalid_max_tokens"
+        if config.api_key_env is not None and not config.api_key_env.strip():
+            return False, "invalid_api_key_env"
+        return True, None
+
+    def _select_model_config(
+        self,
+        override: ModelConfig | None,
+        prefer_default: bool,
+    ) -> ModelConfig:
+        """决定本次调用使用的模型配置"""
+        if prefer_default:
+            default_ok, default_reason = self._validate_model_config(self._default_model)
+            if default_ok:
+                return self._default_model
+            logger.warning(
+                "llm.default_model_invalid",
+                reason=default_reason,
+            )
+
+        if override:
+            override_ok, override_reason = self._validate_model_config(override)
+            if override_ok:
+                if prefer_default:
+                    logger.info("llm.agent_model_fallback", reason=override_reason)
+                return override
+            logger.error(
+                "llm.agent_model_invalid",
+                reason=override_reason,
+            )
+
+        raise LLMUnavailableError("No valid LLM model configuration available")
+
     def _resolve_model_string(self, config: ModelConfig) -> str:
         """构建 litellm 识别的模型字符串
 
@@ -86,6 +128,7 @@ class LLMGateway:
         messages: list[dict],
         model_config: ModelConfig | None = None,
         tools: list[dict] | None = None,
+        prefer_default: bool = True,
         **kwargs,
     ) -> LLMResponse:
         """统一 LLM 调用入口
@@ -94,12 +137,13 @@ class LLMGateway:
             messages: OpenAI 格式的消息列表
             model_config: 模型配置，不传则使用默认配置
             tools: Function Calling 工具定义
+            prefer_default: 是否优先尝试全局默认模型
             **kwargs: 传递给 litellm 的额外参数
 
         Returns:
             LLMResponse 包含回复内容和 Token 用量
         """
-        config = model_config or self._default_model
+        config = self._select_model_config(model_config, prefer_default=prefer_default)
 
         # 预算检查
         if self.token_tracker.is_budget_exceeded():
@@ -179,7 +223,12 @@ class LLMGateway:
                     api_base=original_config.api_base,
                     api_key_env=original_config.api_key_env,
                 )
-                return await self.chat(messages, model_config=fallback_config, **kwargs)
+                return await self.chat(
+                    messages,
+                    model_config=fallback_config,
+                    prefer_default=False,
+                    **kwargs,
+                )
             except Exception as fallback_err:
                 logger.error(
                     "llm.fallback_failed",
