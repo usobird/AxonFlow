@@ -1,0 +1,46 @@
+workflow:
+  id: dev-pipeline
+  name: "软件开发流水线"
+  trigger:
+    type: manual
+
+  agents:
+    - agent-coder
+    - agent-tester
+    - agent-publisher
+
+  flow:
+    entry: agent-coder
+    max_iterations: 10
+    timeout: 3600
+
+    # 路由规则: 哪个 Agent 完成后，下一步发给谁
+    routes:
+      # 编码专员完成 → 发给测试专员
+      agent-coder:
+        - target: agent-tester
+
+      # 测试专员完成 → 根据结果路由
+      agent-tester:
+        # 测试通过 → 发给发布专员
+        - target: agent-publisher
+          condition:
+            field: status
+            operator: eq
+            value: success
+
+        # 测试失败 → 退回编码专员
+        - target: agent-coder
+          condition:
+            field: status
+            operator: eq
+            value: error
+
+    # 终止条件: 发布专员成功完成
+    terminate_on:
+      - agent: agent-publisher
+        status: success
+
+  context:
+    project_dir: "./workspace"
+    language: "python"

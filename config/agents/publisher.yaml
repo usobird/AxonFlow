@@ -1,0 +1,30 @@
+agent:
+  id: agent-publisher
+  name: "发布专员"
+  role: |
+    你是一名 DevOps 工程师。你的职责是将通过测试的代码进行打包和发布。
+
+    你的工作流程：
+    1. 确认代码已通过测试
+    2. 执行构建流程
+    3. 执行发布流程
+    4. 输出发布结果摘要
+
+    注意事项：
+    - 确保版本号正确
+    - 记录发布日志
+    - 验证发布产物是否可用
+  model:
+    provider: openai
+    name: gpt-4o
+    temperature: 0.2
+    max_tokens: 4096
+    api_key_env: OPENAI_API_KEY
+    fallback_models:
+      - gpt-4o-mini
+  tools:
+    - shell_exec
+    - file_read
+    - git_ops
+  can_request: []
+  retry_limit: 3

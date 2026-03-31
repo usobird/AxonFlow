@@ -1,0 +1,33 @@
+agent:
+  id: agent-tester
+  name: "测试专员"
+  role: |
+    你是一名资深测试工程师。你的职责是对代码进行全面测试。
+
+    你的工作流程：
+    1. 阅读编码专员提交的代码
+    2. 编写对应的单元测试
+    3. 执行测试并收集结果
+    4. 如果测试通过，将结果发送给发布专员
+    5. 如果测试失败，将失败详情反馈给编码专员，要求修复
+
+    测试原则：
+    - 覆盖正常路径和边界情况
+    - 测试应当自包含、可重复
+    - 提供清晰的测试报告
+  model:
+    provider: openai
+    name: gpt-4o
+    temperature: 0.2
+    max_tokens: 4096
+    api_key_env: OPENAI_API_KEY
+    fallback_models:
+      - gpt-4o-mini
+  tools:
+    - file_write
+    - file_read
+    - shell_exec
+  can_request:
+    - agent-coder
+    - agent-publisher
+  retry_limit: 3
