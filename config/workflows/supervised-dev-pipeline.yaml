@@ -1,0 +1,47 @@
+workflow:
+  id: supervised-dev-pipeline
+  name: "Supervisor 模式开发流水线"
+  trigger:
+    type: manual
+
+  agents:
+    - agent-supervisor
+    - agent-coder
+    - agent-tester
+    - agent-publisher
+
+  flow:
+    mode: supervisor
+    entry: agent-coder
+
+    supervisor:
+      agent_id: agent-supervisor
+      planning_enabled: true
+      intervention_on_failure: true
+
+    max_iterations: 15
+    timeout: 3600
+
+    # 静态路由作为 Supervisor 决策的参考
+    routes:
+      agent-coder:
+        - target: agent-tester
+      agent-tester:
+        - target: agent-publisher
+          condition:
+            field: status
+            operator: eq
+            value: success
+        - target: agent-coder
+          condition:
+            field: status
+            operator: eq
+            value: error
+
+    terminate_on:
+      - agent: agent-publisher
+        status: success
+
+  context:
+    project_dir: "./workspace"
+    language: "python"

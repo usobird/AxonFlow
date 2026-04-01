@@ -8,7 +8,7 @@ from typing import TypeVar
 import yaml
 from pydantic import BaseModel
 
-from autoflow.config.models import AgentConfig, AutoFlowConfig, WorkflowConfig
+from autoflow.config.models import AgentConfig, AutoFlowConfig, PersonaConfig, WorkflowConfig
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -31,6 +31,13 @@ def load_global_config(path: Path | str = "config/autoflow.yaml") -> AutoFlowCon
     return AutoFlowConfig(**data)
 
 
+def _read_text_file(path: Path) -> str | None:
+    """读取文本文件内容，文件不存在时返回 None"""
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
 def load_agent_config(path: Path | str) -> AgentConfig:
     """加载单个智能体配置"""
     data = _load_yaml(Path(path))
@@ -40,24 +47,107 @@ def load_agent_config(path: Path | str) -> AgentConfig:
     return AgentConfig(**data)
 
 
+def load_agent_config_from_dir(directory: Path) -> AgentConfig:
+    """从目录格式加载智能体配置
+
+    目录结构：
+        agent_name/
+        ├── config.yaml   # 智能体核心配置（必需）
+        ├── soul.md       # 价值观与行为准则（可选）
+        ├── user.md       # 用户/协作者档案（可选）
+        └── workflow.md   # 工作流程指南（可选）
+    """
+    config_path = directory / "config.yaml"
+    data = _load_yaml(config_path)
+    if "agent" in data:
+        data = data["agent"]
+    config = AgentConfig(**data)
+
+    # 读取 persona markdown 文件并注入
+    soul = _read_text_file(directory / "soul.md")
+    user = _read_text_file(directory / "user.md")
+    workflow = _read_text_file(directory / "workflow.md")
+
+    if soul is not None or user is not None or workflow is not None:
+        config.persona = PersonaConfig(
+            soul=soul if soul is not None else config.persona.soul,
+            user=user if user is not None else config.persona.user,
+            workflow=workflow if workflow is not None else config.persona.workflow,
+        )
+
+    return config
+
+
 def load_all_agent_configs(directory: Path | str = "config/agents") -> list[AgentConfig]:
-    """加载目录下所有智能体配置"""
+    """加载目录下所有智能体配置
+
+    支持两种格式：
+    1. 单文件格式：agents/reviewer.yaml
+    2. 目录格式：  agents/reviewer/config.yaml  (+ persona md 文件)
+
+    按名称排序以保证确定性顺序。
+    """
     directory = Path(directory)
     if not directory.exists():
         return []
-    configs = []
-    for yaml_file in sorted(directory.glob("*.yaml")):
-        configs.append(load_agent_config(yaml_file))
-    for yml_file in sorted(directory.glob("*.yml")):
-        configs.append(load_agent_config(yml_file))
+
+    configs: list[AgentConfig] = []
+
+    for entry in sorted(directory.iterdir(), key=lambda p: p.name):
+        if entry.is_dir() and (entry / "config.yaml").exists():
+            # 目录格式：含 config.yaml 的子目录
+            configs.append(load_agent_config_from_dir(entry))
+        elif entry.is_file() and entry.suffix in (".yaml", ".yml"):
+            # 单文件格式（向后兼容）
+            configs.append(load_agent_config(entry))
+
     return configs
 
 
+def _deep_merge(base: dict, override: dict) -> dict:
+    """递归合并两个字典，override 中的值优先"""
+    merged = base.copy()
+    for key, value in override.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def load_workflow_config(path: Path | str) -> WorkflowConfig:
-    """加载单个工作流配置"""
-    data = _load_yaml(Path(path))
+    """加载单个工作流配置
+
+    支持 extends 字段：指定基础工作流 ID，当前配置会深度合并到基础配置之上。
+    """
+    path = Path(path)
+    data = _load_yaml(path)
     if "workflow" in data:
         data = data["workflow"]
+
+    # 处理工作流继承
+    if "extends" in data:
+        base_id = data["extends"]
+        # 在同目录下查找基础工作流文件
+        parent_dir = path.parent
+        base_path: Path | None = None
+        for ext in (".yaml", ".yml"):
+            candidate = parent_dir / f"{base_id}{ext}"
+            if candidate.exists():
+                base_path = candidate
+                break
+
+        if base_path is not None:
+            base_data = _load_yaml(base_path)
+            if "workflow" in base_data:
+                base_data = base_data["workflow"]
+            # 移除 extends 字段，避免递归 / 传给模型
+            override = {k: v for k, v in data.items() if k != "extends"}
+            data = _deep_merge(base_data, override)
+
+        # 确保最终数据中不含 extends
+        data.pop("extends", None)
+
     return WorkflowConfig(**data)
 
 
