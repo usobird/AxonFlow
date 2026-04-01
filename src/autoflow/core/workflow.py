@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from abc import ABC, abstractmethod
 
 import structlog
 
@@ -43,17 +44,14 @@ class WorkflowResult:
         }
 
 
-class WorkflowOrchestrator:
-    """工作流编排器
+# ---------------------------------------------------------------------------
+# 抽象基类
+# ---------------------------------------------------------------------------
 
-    负责:
-    - 初始化工作流上下文
-    - 将初始任务分发给入口 Agent
-    - 监听事件，根据路由规则驱动 Agent 间的消息流转
-    - 检测终止条件，返回执行结果
-    """
 
-    # Orchestrator 本身也有一个虚拟 ID，用于收发控制消息
+class BaseOrchestrator(ABC):
+    """编排器抽象基类 — 所有协作模式的公共接口"""
+
     ORCHESTRATOR_ID = "__orchestrator__"
 
     def __init__(
@@ -61,18 +59,84 @@ class WorkflowOrchestrator:
         config: WorkflowConfig,
         agent_registry: AgentRegistry,
         message_bus: MessageBus,
+        **kwargs,
     ) -> None:
         self.config = config
         self.agents = agent_registry
         self.message_bus = message_bus
+
+    # -- 抽象方法 ----------------------------------------------------------
+
+    @abstractmethod
+    async def execute(self, initial_input: str) -> WorkflowResult:
+        """执行工作流"""
+        ...
+
+    # -- 公共辅助方法 ------------------------------------------------------
+
+    def _create_context(self, initial_input: str) -> WorkflowContext:
+        """创建工作流上下文"""
+        ctx = WorkflowContext(input=initial_input)
+        ctx.shared_state.update(self.config.context)
+        return ctx
+
+    def _inject_context(self, ctx: WorkflowContext) -> None:
+        """为所有参与的 Agent 注入上下文"""
+        for agent_id in self.config.agents:
+            agent = self.agents.get(agent_id)
+            if agent:
+                agent.set_context(ctx.workflow_id, ctx)
+
+    def _is_terminal(self, event: Message) -> bool:
+        """检查是否满足终止条件"""
+        for condition in self.config.flow.terminate_on:
+            agent_match = condition.get("agent") == event.sender
+            status_match = condition.get("status") == event.payload.get("status")
+            if agent_match and status_match:
+                return True
+        return False
+
+    async def _dispatch(
+        self,
+        target_id: str,
+        payload: dict,
+        workflow_id: str,
+        step_id: str,
+        parent_id: str = "",
+    ) -> None:
+        """发送任务消息给指定 Agent"""
+        msg = Message(
+            sender=self.ORCHESTRATOR_ID,
+            receiver=target_id,
+            type=MessageType.TASK_REQUEST,
+            payload=payload,
+            workflow_id=workflow_id,
+            step_id=step_id,
+            parent_message_id=parent_id,
+        )
+        await self.message_bus.send(msg)
+
+
+# ---------------------------------------------------------------------------
+# 扁平编排器（原 WorkflowOrchestrator）
+# ---------------------------------------------------------------------------
+
+
+class FlatOrchestrator(BaseOrchestrator):
+    """扁平编排器 — 线性 / 条件路由 + fan-in 汇聚
+
+    在原有路由逻辑的基础上增加了 fan-in/join 支持：
+    当某个目标 Agent 配置了 JoinConfig 时，编排器会等待其 wait_for
+    列表中的所有（或任一）上游 Agent 完成后，再将合并后的 payload
+    分发给该目标 Agent。
+    """
 
     async def execute(self, initial_input: str) -> WorkflowResult:
         """执行工作流"""
         start_time = time.monotonic()
 
         # 1. 创建上下文
-        ctx = WorkflowContext(input=initial_input)
-        ctx.shared_state.update(self.config.context)
+        ctx = self._create_context(initial_input)
         workflow_id = ctx.workflow_id
 
         logger.info(
@@ -83,23 +147,26 @@ class WorkflowOrchestrator:
         )
 
         # 2. 为所有参与的 Agent 注入上下文
-        for agent_id in self.config.agents:
-            agent = self.agents.get(agent_id)
-            if agent:
-                agent.set_context(workflow_id, ctx)
+        self._inject_context(ctx)
 
         # 3. 发送初始任务给入口 Agent
-        entry_message = Message(
-            sender=self.ORCHESTRATOR_ID,
-            receiver=self.config.flow.entry,
-            type=MessageType.TASK_REQUEST,
+        await self._dispatch(
+            target_id=self.config.flow.entry,
             payload={"task": initial_input},
             workflow_id=workflow_id,
             step_id="step-0",
         )
-        await self.message_bus.send(entry_message)
 
-        # 4. 事件循环
+        # 4. 构建 join 反向索引：sender_id -> 它被哪些 join 目标等待
+        join_cfg = self.config.flow.join  # dict[target_agent_id, JoinConfig]
+        join_pending: dict[str, dict[str, dict]] = {target: {} for target in join_cfg}
+        # sender_to_join_targets: 某 sender 完成后需要更新哪些 join 目标
+        sender_to_join_targets: dict[str, list[str]] = {}
+        for target, cfg in join_cfg.items():
+            for waited in cfg.wait_for:
+                sender_to_join_targets.setdefault(waited, []).append(target)
+
+        # 5. 事件循环
         iteration = 0
         max_iter = self.config.flow.max_iterations
         timeout = self.config.flow.timeout
@@ -116,9 +183,7 @@ class WorkflowOrchestrator:
                 )
 
             # 监听 Orchestrator 的收件箱（Agent 完成任务后会回复到这里）
-            event = await self.message_bus.receive(
-                self.ORCHESTRATOR_ID, block_ms=5000
-            )
+            event = await self.message_bus.receive(self.ORCHESTRATOR_ID, block_ms=5000)
             if event is None:
                 continue
 
@@ -152,19 +217,50 @@ class WorkflowOrchestrator:
                     duration_seconds=elapsed,
                 )
 
-            # 根据路由规则分发下一步
+            # ---- fan-in/join 记录 ----
+            # 如果当前 sender 是某个 join 目标的 wait_for 成员，记录其结果
+            join_dispatched_targets: set[str] = set()
+            if event.sender in sender_to_join_targets:
+                for join_target in sender_to_join_targets[event.sender]:
+                    join_pending[join_target][event.sender] = event.payload
+                    cfg = join_cfg[join_target]
+
+                    # 判断 join 条件是否满足
+                    ready = False
+                    if cfg.strategy == "all":
+                        ready = all(w in join_pending[join_target] for w in cfg.wait_for)
+                    elif cfg.strategy == "any":
+                        ready = len(join_pending[join_target]) >= 1
+
+                    if ready:
+                        # 合并所有已收集的 payload
+                        merged_payload: dict = {}
+                        for agent_id, p in join_pending[join_target].items():
+                            merged_payload[agent_id] = p
+                        await self._dispatch(
+                            target_id=join_target,
+                            payload=merged_payload,
+                            workflow_id=workflow_id,
+                            step_id=f"step-{iteration}",
+                            parent_id=event.id,
+                        )
+                        join_dispatched_targets.add(join_target)
+                        # 重置该 join 点的待收集状态
+                        join_pending[join_target] = {}
+
+            # ---- 常规路由 ----
             next_targets = self._resolve_next(event)
             for target_id, payload in next_targets:
-                next_msg = Message(
-                    sender=self.ORCHESTRATOR_ID,
-                    receiver=target_id,
-                    type=MessageType.TASK_REQUEST,
+                # 如果目标是 join 点且尚未被 fan-in 触发，跳过常规分发
+                if target_id in join_cfg and target_id not in join_dispatched_targets:
+                    continue
+                await self._dispatch(
+                    target_id=target_id,
                     payload=payload,
                     workflow_id=workflow_id,
                     step_id=f"step-{iteration}",
-                    parent_message_id=event.id,
+                    parent_id=event.id,
                 )
-                await self.message_bus.send(next_msg)
 
         elapsed = time.monotonic() - start_time
         logger.warning(
@@ -178,15 +274,6 @@ class WorkflowOrchestrator:
             iterations=iteration,
             duration_seconds=elapsed,
         )
-
-    def _is_terminal(self, event: Message) -> bool:
-        """检查是否满足终止条件"""
-        for condition in self.config.flow.terminate_on:
-            agent_match = condition.get("agent") == event.sender
-            status_match = condition.get("status") == event.payload.get("status")
-            if agent_match and status_match:
-                return True
-        return False
 
     def _resolve_next(self, event: Message) -> list[tuple[str, dict]]:
         """根据路由规则解析下一步目标"""
@@ -205,3 +292,7 @@ class WorkflowOrchestrator:
                     targets.append((route.target, event.payload))
 
         return targets
+
+
+# 向后兼容别名
+WorkflowOrchestrator = FlatOrchestrator

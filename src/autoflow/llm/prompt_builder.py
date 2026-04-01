@@ -27,7 +27,19 @@ class PromptBuilder:
         messages: list[dict] = []
 
         # 1. System Prompt
-        system_parts = [agent_config.role]
+        system_parts: list[str] = []
+
+        # 1a. Persona 人设注入（在 role 之前）
+        if agent_config.persona.soul:
+            system_parts.append(f"## 价值观与行为准则\n{agent_config.persona.soul}")
+        if agent_config.persona.user:
+            system_parts.append(f"## 用户档案\n{agent_config.persona.user}")
+        if agent_config.persona.workflow:
+            system_parts.append(f"## 工作流程指南\n{agent_config.persona.workflow}")
+
+        # 1b. 角色描述
+        if agent_config.role:
+            system_parts.append(agent_config.role)
 
         if context and context.shared_state:
             state_str = "\n".join(f"- {k}: {v}" for k, v in context.shared_state.items())

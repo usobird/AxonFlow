@@ -42,6 +42,27 @@ class MemoryConfig(BaseModel):
 
 
 # ============================================================
+# Agent Persona 配置
+# ============================================================
+
+
+class PersonaConfig(BaseModel):
+    """Agent 人设配置 — 类似 OpenClaw 的结构化人设文件
+
+    每个 Agent 可通过目录结构定义人设：
+    - soul.md: 价值观与行为准则
+    - user.md: 用户/协作者档案
+    - workflow.md: 工作流程指南
+
+    内容由 loader 从 md 文件中读取并注入。
+    """
+
+    soul: str | None = None  # 价值观与行为准则
+    user: str | None = None  # 用户/协作者档案
+    workflow: str | None = None  # 工作流程指南
+
+
+# ============================================================
 # 智能体配置
 # ============================================================
 
@@ -50,12 +71,13 @@ class AgentConfig(BaseModel):
     """智能体配置
 
     支持通过 agent_type 指定 Agent 实现类，通过 class_path 加载自定义类，
-    通过 parameters 传递自定义参数，通过 memory 配置记忆系统。
+    通过 parameters 传递自定义参数，通过 memory 配置记忆系统，
+    通过 persona 定义结构化人设。
     """
 
     id: str
     name: str
-    role: str  # System Prompt / 角色描述
+    role: str = ""  # System Prompt / 角色描述（可被 persona 文件替代）
     agent_type: str = "base"  # Agent 类型标识: base / planner / reviewer / custom
     class_path: str | None = None  # 自定义 Agent 类路径，如 "mymodule.MyAgent"
     model: ModelConfig = Field(default_factory=ModelConfig)
@@ -65,6 +87,7 @@ class AgentConfig(BaseModel):
     retry_limit: int = 3
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     parameters: dict[str, Any] = Field(default_factory=dict)  # 自定义扩展参数
+    persona: PersonaConfig = Field(default_factory=PersonaConfig)  # 人设配置
 
 
 # ============================================================
@@ -112,14 +135,35 @@ class Route(BaseModel):
     condition: RouteCondition | None = None
 
 
+class JoinConfig(BaseModel):
+    """Fan-in 汇聚配置
+
+    指定某个 Agent 需要等待多个上游 Agent 全部（或任一）完成后才接收任务。
+    """
+
+    wait_for: list[str]  # 需要等待的 Agent ID 列表
+    strategy: str = "all"  # all = 全部完成 | any = 任一完成
+
+
+class SupervisorConfig(BaseModel):
+    """Supervisor 模式配置"""
+
+    agent_id: str  # 用作 supervisor 的 Agent ID
+    planning_enabled: bool = True  # 是否在开头做全局规划
+    intervention_on_failure: bool = True  # agent 失败时是否自动介入纠偏
+
+
 class FlowConfig(BaseModel):
     """工作流流程配置"""
 
+    mode: str = "flat"  # 编排模式: flat / supervisor / 自定义 class_path
     entry: str  # 入口 Agent ID
     max_iterations: int = 10
     timeout: int = 3600  # 秒
     routes: dict[str, list[Route]] = Field(default_factory=dict)
     terminate_on: list[dict[str, Any]] = Field(default_factory=list)
+    join: dict[str, JoinConfig] = Field(default_factory=dict)  # fan-in 汇聚点
+    supervisor: SupervisorConfig | None = None  # supervisor 模式配置
 
 
 class WorkflowConfig(BaseModel):
@@ -127,6 +171,7 @@ class WorkflowConfig(BaseModel):
 
     id: str
     name: str
+    extends: str | None = None  # 继承基础工作流模板 ID
     trigger: TriggerConfig = Field(default_factory=TriggerConfig)
     agents: list[str] = Field(default_factory=list)
     flow: FlowConfig
@@ -160,12 +205,26 @@ class WebhookEndpoint(BaseModel):
     events: list[str] = Field(default_factory=lambda: ["workflow.completed", "workflow.failed"])
 
 
+class ToolPluginConfig(BaseModel):
+    """外部工具插件配置"""
+
+    class_path: str  # 工具类的完整路径，如 "mypackage.tools.SlackTool"
+    config: dict[str, Any] = Field(default_factory=dict)  # 传递给工具的配置参数
+
+
+class PluginsConfig(BaseModel):
+    """插件配置"""
+
+    tools: list[ToolPluginConfig] = Field(default_factory=list)
+
+
 class AutoFlowConfig(BaseModel):
     """AutoFlow 全局配置"""
 
     redis: RedisConfig = Field(default_factory=RedisConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     webhooks: list[WebhookEndpoint] = Field(default_factory=list)
+    plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     log_level: str = "INFO"
     log_format: str = "json"  # json / console
     workspace_dir: str = "./workspace"

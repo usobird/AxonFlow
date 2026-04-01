@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 from pathlib import Path
 
 import structlog
@@ -16,12 +17,13 @@ from autoflow.config.models import AutoFlowConfig
 from autoflow.core.agent import AgentRegistry, create_agent
 from autoflow.memory.local import InMemoryStore
 from autoflow.core.scheduler import Scheduler
-from autoflow.core.workflow import WorkflowOrchestrator, WorkflowResult
+from autoflow.core.orchestrator_factory import create_orchestrator
+from autoflow.core.workflow import WorkflowResult
 from autoflow.llm.gateway import LLMGateway
 from autoflow.messaging.base import MessageBus
 from autoflow.messaging.memory_bus import InMemoryMessageBus
 from autoflow.observability.logger import setup_logging
-from autoflow.tools.base import ToolRegistry
+from autoflow.tools.base import Tool, ToolRegistry
 from autoflow.tools.file_ops import FileReadTool, FileWriteTool
 from autoflow.tools.git_ops import GitOpsTool
 from autoflow.tools.http_request import HttpRequestTool
@@ -56,6 +58,7 @@ class AutoFlowEngine:
         self._memory_store: InMemoryStore | None = None
         self._agent_tasks: list[asyncio.Task] = []
         self._running = False
+        self._initialized = False
 
     @property
     def config(self) -> AutoFlowConfig:
@@ -77,6 +80,9 @@ class AutoFlowEngine:
 
     async def initialize(self) -> None:
         """初始化引擎 — 加载配置并组装模块"""
+        if self._initialized:
+            return
+
         # 1. 加载全局配置
         if self._config is None:
             global_config_path = self._config_dir / "autoflow.yaml"
@@ -103,6 +109,9 @@ class AutoFlowEngine:
         self._tool_registry = ToolRegistry()
         self._register_builtin_tools()
 
+        # 5.1 加载外部工具插件
+        self._load_plugin_tools()
+
         # 5.5 初始化共享记忆存储
         self._memory_store = InMemoryStore()
 
@@ -115,15 +124,21 @@ class AutoFlowEngine:
         self._scheduler.set_run_callback(self._scheduled_run)
         self._load_cron_jobs()
 
+        self._initialized = True
         logger.info("engine.initialized")
 
     async def _create_message_bus(self) -> MessageBus:
         """创建消息总线（尝试 Redis，失败则降级到内存）"""
         try:
             from autoflow.messaging.redis_bus import RedisMessageBus
+            import redis.asyncio as aioredis
 
             bus = RedisMessageBus(self.config.redis.url)
             await bus.start()
+            # 实际检测 Redis 连通性
+            r = aioredis.from_url(self.config.redis.url)
+            await r.ping()
+            await r.aclose()
             logger.info("engine.message_bus", type="redis")
             return bus
         except Exception as e:
@@ -144,6 +159,43 @@ class AutoFlowEngine:
         self._tool_registry.register(FileWriteTool())
         self._tool_registry.register(GitOpsTool())
         self._tool_registry.register(HttpRequestTool())
+
+    def _load_plugin_tools(self) -> None:
+        """加载外部工具插件"""
+        assert self._tool_registry is not None
+
+        for plugin_cfg in self.config.plugins.tools:
+            try:
+                module_path, class_name = plugin_cfg.class_path.rsplit(".", 1)
+                module = importlib.import_module(module_path)
+                tool_cls = getattr(module, class_name)
+
+                if not (isinstance(tool_cls, type) and issubclass(tool_cls, Tool)):
+                    logger.warning(
+                        "engine.plugin_tool_invalid",
+                        class_path=plugin_cfg.class_path,
+                        error="Not a subclass of Tool",
+                    )
+                    continue
+
+                # Instantiate — pass config if tool accepts it
+                try:
+                    tool = tool_cls(**plugin_cfg.config)
+                except TypeError:
+                    tool = tool_cls()
+
+                self._tool_registry.register(tool)
+                logger.info(
+                    "engine.plugin_tool_loaded",
+                    class_path=plugin_cfg.class_path,
+                    tool_name=tool.name,
+                )
+            except Exception as e:
+                logger.error(
+                    "engine.plugin_tool_failed",
+                    class_path=plugin_cfg.class_path,
+                    error=str(e),
+                )
 
     async def _load_agents(self) -> None:
         """从配置目录加载所有 Agent"""
@@ -185,7 +237,7 @@ class AutoFlowEngine:
 
     async def start(self) -> None:
         """启动引擎 — 启动所有 Agent 和调度器"""
-        if not self._running:
+        if not self._initialized:
             await self.initialize()
 
         self._running = True
@@ -251,10 +303,11 @@ class AutoFlowEngine:
         assert self._agent_registry is not None
         assert self._message_bus is not None
 
-        orchestrator = WorkflowOrchestrator(
+        orchestrator = create_orchestrator(
             config=wf_config,
             agent_registry=self._agent_registry,
             message_bus=self._message_bus,
+            llm_gateway=self._llm_gateway,
         )
 
         return await orchestrator.execute(input_data)

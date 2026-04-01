@@ -98,20 +98,26 @@ class LLMGateway:
         """构建 litellm 识别的模型字符串
 
         例如: openai/gpt-4o, anthropic/claude-3-opus, ollama/llama3
+
+        当使用自定义 api_base 时，加上 openai/ 前缀确保 litellm
+        走 OpenAI 兼容协议路径。
         """
         provider = config.provider.lower()
         name = config.name
 
-        # 部分 provider 需要前缀
         if provider == "openai":
-            return name  # litellm 默认就是 openai
+            # 使用自定义 api_base 时，需要 openai/ 前缀让 litellm 识别协议
+            if config.api_base:
+                return f"openai/{name}"
+            return name  # 官方 OpenAI，litellm 默认识别
         if provider in ("anthropic", "ollama", "deepseek", "groq"):
             return f"{provider}/{name}"
         # 自定义 API base 的通用兼容
         return name
 
-    def _setup_env(self, config: ModelConfig) -> None:
-        """设置 LLM API 环境变量"""
+    def _setup_env(self, config: ModelConfig) -> dict:
+        """设置 LLM API 环境变量，并返回需要传给 litellm 的额外参数"""
+        extra_kwargs: dict = {}
         if config.api_key_env:
             # 确保环境变量存在
             key = os.environ.get(config.api_key_env)
@@ -120,8 +126,11 @@ class LLMGateway:
                     "llm.api_key_missing",
                     env_var=config.api_key_env,
                 )
+            else:
+                extra_kwargs["api_key"] = key
         if config.api_base:
-            os.environ["OPENAI_API_BASE"] = config.api_base
+            extra_kwargs["api_base"] = config.api_base
+        return extra_kwargs
 
     async def chat(
         self,
@@ -147,11 +156,9 @@ class LLMGateway:
 
         # 预算检查
         if self.token_tracker.is_budget_exceeded():
-            raise BudgetExceededError(
-                f"Token budget exceeded: {self.token_tracker.total_tokens}"
-            )
+            raise BudgetExceededError(f"Token budget exceeded: {self.token_tracker.total_tokens}")
 
-        self._setup_env(config)
+        env_kwargs = self._setup_env(config)
         model_str = self._resolve_model_string(config)
 
         call_kwargs: dict = {
@@ -159,6 +166,7 @@ class LLMGateway:
             "messages": messages,
             "temperature": config.temperature,
             "max_tokens": config.max_tokens,
+            **env_kwargs,
             **kwargs,
         }
         if tools:
@@ -176,7 +184,12 @@ class LLMGateway:
                 output_tokens=output_tokens,
             )
 
-            content = response.choices[0].message.content or ""
+            msg = response.choices[0].message
+            content = msg.content or ""
+
+            # 部分模型（如 Qwen3 thinking 模式）将内容放在 reasoning_content 中
+            if not content.strip() and hasattr(msg, "reasoning_content") and msg.reasoning_content:
+                content = msg.reasoning_content
 
             logger.info(
                 "llm.call_completed",
