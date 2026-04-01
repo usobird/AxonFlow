@@ -58,6 +58,7 @@ class AutoFlowEngine:
         self._memory_store: InMemoryStore | None = None
         self._agent_tasks: list[asyncio.Task] = []
         self._running = False
+        self._initialized = False
 
     @property
     def config(self) -> AutoFlowConfig:
@@ -79,6 +80,9 @@ class AutoFlowEngine:
 
     async def initialize(self) -> None:
         """初始化引擎 — 加载配置并组装模块"""
+        if self._initialized:
+            return
+
         # 1. 加载全局配置
         if self._config is None:
             global_config_path = self._config_dir / "autoflow.yaml"
@@ -120,15 +124,21 @@ class AutoFlowEngine:
         self._scheduler.set_run_callback(self._scheduled_run)
         self._load_cron_jobs()
 
+        self._initialized = True
         logger.info("engine.initialized")
 
     async def _create_message_bus(self) -> MessageBus:
         """创建消息总线（尝试 Redis，失败则降级到内存）"""
         try:
             from autoflow.messaging.redis_bus import RedisMessageBus
+            import redis.asyncio as aioredis
 
             bus = RedisMessageBus(self.config.redis.url)
             await bus.start()
+            # 实际检测 Redis 连通性
+            r = aioredis.from_url(self.config.redis.url)
+            await r.ping()
+            await r.aclose()
             logger.info("engine.message_bus", type="redis")
             return bus
         except Exception as e:
@@ -227,7 +237,7 @@ class AutoFlowEngine:
 
     async def start(self) -> None:
         """启动引擎 — 启动所有 Agent 和调度器"""
-        if not self._running:
+        if not self._initialized:
             await self.initialize()
 
         self._running = True

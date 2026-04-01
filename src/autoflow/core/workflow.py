@@ -59,6 +59,7 @@ class BaseOrchestrator(ABC):
         config: WorkflowConfig,
         agent_registry: AgentRegistry,
         message_bus: MessageBus,
+        **kwargs,
     ) -> None:
         self.config = config
         self.agents = agent_registry
