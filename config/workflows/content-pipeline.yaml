@@ -1,0 +1,42 @@
+workflow:
+  id: content-pipeline
+  name: "内容创作流水线"
+  trigger:
+    type: manual
+
+  agents:
+    - agent-researcher
+    - agent-writer
+    - agent-reviewer
+
+  flow:
+    entry: agent-researcher
+    max_iterations: 8
+    timeout: 1800
+
+    routes:
+      agent-researcher:
+        - target: agent-writer
+
+      agent-writer:
+        - target: agent-reviewer
+
+      agent-reviewer:
+        - target: agent-writer
+          condition:
+            field: status
+            operator: eq
+            value: error
+        - target: agent-researcher
+          condition:
+            field: needs_more_research
+            operator: eq
+            value: true
+
+    terminate_on:
+      - agent: agent-reviewer
+        status: success
+
+  context:
+    output_format: "markdown"
+    tone: "professional"

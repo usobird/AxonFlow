@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from autoflow import __version__
+from autoflow.cli.commands.agent import agent_app
 
 app = typer.Typer(
     name="autoflow",
@@ -22,6 +23,7 @@ console = Console()
 def _get_engine():
     """懒加载引擎实例"""
     from autoflow.engine import AutoFlowEngine
+
     return AutoFlowEngine()
 
 
@@ -146,6 +148,9 @@ def status(
 def version() -> None:
     """显示版本信息"""
     console.print(f"AutoFlow v{__version__}")
+
+
+app.add_typer(agent_app, name="agent", help="智能体管理")
 
 
 def main() -> None:

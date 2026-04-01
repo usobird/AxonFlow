@@ -28,3 +28,11 @@ agent:
     - git_ops
   can_request: []
   retry_limit: 3
+  agent_type: base
+  memory:
+    enabled: true
+    backend: in_memory
+    max_records: 200
+    scopes:
+      - agent
+      - workflow
