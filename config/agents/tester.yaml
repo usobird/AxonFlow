@@ -31,3 +31,11 @@ agent:
     - agent-coder
     - agent-publisher
   retry_limit: 3
+  agent_type: base
+  memory:
+    enabled: true
+    backend: in_memory
+    max_records: 500
+    scopes:
+      - agent
+      - workflow

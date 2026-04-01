@@ -13,7 +13,8 @@ from autoflow.config.loader import (
     load_global_config,
 )
 from autoflow.config.models import AutoFlowConfig
-from autoflow.core.agent import AgentRegistry, BaseAgent
+from autoflow.core.agent import AgentRegistry, create_agent
+from autoflow.memory.local import InMemoryStore
 from autoflow.core.scheduler import Scheduler
 from autoflow.core.workflow import WorkflowOrchestrator, WorkflowResult
 from autoflow.llm.gateway import LLMGateway
@@ -52,6 +53,7 @@ class AutoFlowEngine:
         self._tool_registry: ToolRegistry | None = None
         self._agent_registry: AgentRegistry | None = None
         self._scheduler: Scheduler | None = None
+        self._memory_store: InMemoryStore | None = None
         self._agent_tasks: list[asyncio.Task] = []
         self._running = False
 
@@ -100,6 +102,9 @@ class AutoFlowEngine:
         # 5. 注册内置工具
         self._tool_registry = ToolRegistry()
         self._register_builtin_tools()
+
+        # 5.5 初始化共享记忆存储
+        self._memory_store = InMemoryStore()
 
         # 6. 加载并注册 Agent
         self._agent_registry = AgentRegistry()
@@ -151,11 +156,12 @@ class AutoFlowEngine:
         agent_configs = load_all_agent_configs(agents_dir)
 
         for cfg in agent_configs:
-            agent = BaseAgent(
+            agent = create_agent(
                 config=cfg,
                 message_bus=self._message_bus,
                 llm_gateway=self._llm_gateway,
                 tool_registry=self._tool_registry,
+                memory_store=self._memory_store,
             )
             self._agent_registry.register(agent)
 
@@ -228,9 +234,7 @@ class AutoFlowEngine:
 
         logger.info("engine.stopped")
 
-    async def run_workflow(
-        self, workflow_id: str, input_data: str
-    ) -> WorkflowResult:
+    async def run_workflow(self, workflow_id: str, input_data: str) -> WorkflowResult:
         """执行指定工作流"""
         workflows_dir = self._config_dir / "workflows"
         workflow_configs = load_all_workflow_configs(workflows_dir)
@@ -275,19 +279,7 @@ class AutoFlowEngine:
         """获取系统状态"""
         return {
             "running": self._running,
-            "agents": (
-                self._agent_registry.get_states()
-                if self._agent_registry
-                else {}
-            ),
-            "tools": (
-                self._tool_registry.list_tools()
-                if self._tool_registry
-                else []
-            ),
-            "token_usage": (
-                self._llm_gateway.token_tracker.summary()
-                if self._llm_gateway
-                else {}
-            ),
+            "agents": (self._agent_registry.get_states() if self._agent_registry else {}),
+            "tools": (self._tool_registry.list_tools() if self._tool_registry else []),
+            "token_usage": (self._llm_gateway.token_tracker.summary() if self._llm_gateway else {}),
         }

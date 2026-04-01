@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 # LLM 模型配置
 # ============================================================
 
+
 class ModelConfig(BaseModel):
     """LLM 模型配置"""
 
@@ -24,25 +25,52 @@ class ModelConfig(BaseModel):
 
 
 # ============================================================
+# 记忆配置
+# ============================================================
+
+
+class MemoryConfig(BaseModel):
+    """智能体记忆配置"""
+
+    enabled: bool = True
+    backend: str = "in_memory"  # in_memory / redis（后续扩展）
+    max_records: int = 1000  # 最大记忆条数
+    default_ttl: int | None = None  # 默认过期时间（秒），None 不过期
+    scopes: list[str] = Field(
+        default_factory=lambda: ["agent", "workflow"]
+    )  # 该 Agent 可访问的记忆作用域
+
+
+# ============================================================
 # 智能体配置
 # ============================================================
 
+
 class AgentConfig(BaseModel):
-    """智能体配置"""
+    """智能体配置
+
+    支持通过 agent_type 指定 Agent 实现类，通过 class_path 加载自定义类，
+    通过 parameters 传递自定义参数，通过 memory 配置记忆系统。
+    """
 
     id: str
     name: str
     role: str  # System Prompt / 角色描述
+    agent_type: str = "base"  # Agent 类型标识: base / planner / reviewer / custom
+    class_path: str | None = None  # 自定义 Agent 类路径，如 "mymodule.MyAgent"
     model: ModelConfig = Field(default_factory=ModelConfig)
     tools: list[str] = Field(default_factory=list)
     can_request: list[str] = Field(default_factory=list)
     max_concurrent: int = 1
     retry_limit: int = 3
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    parameters: dict[str, Any] = Field(default_factory=dict)  # 自定义扩展参数
 
 
 # ============================================================
 # 工作流配置
 # ============================================================
+
 
 class TriggerConfig(BaseModel):
     """触发器配置"""
@@ -108,6 +136,7 @@ class WorkflowConfig(BaseModel):
 # ============================================================
 # 全局配置
 # ============================================================
+
 
 class RedisConfig(BaseModel):
     """Redis 连接配置"""

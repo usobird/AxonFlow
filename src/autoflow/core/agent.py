@@ -1,19 +1,23 @@
-"""Agent 基类与 AgentRegistry"""
+"""Agent 基类、AgentRegistry 与 Agent 工厂"""
 
 from __future__ import annotations
 
 import asyncio
+import importlib
 from enum import Enum
+from typing import Any
 
 import structlog
 
 from autoflow.config.models import AgentConfig
 from autoflow.core.context import WorkflowContext
 from autoflow.core.message import Message, MessageType
-from autoflow.llm.gateway import LLMGateway, LLMResponse
+from autoflow.llm.gateway import LLMGateway
 from autoflow.llm.prompt_builder import PromptBuilder
+from autoflow.memory.base import MemoryRecord, MemoryScope, MemoryStore
+from autoflow.memory.local import InMemoryStore
 from autoflow.messaging.base import MessageBus
-from autoflow.tools.base import ToolRegistry, ToolResult
+from autoflow.tools.base import ToolRegistry
 
 logger = structlog.get_logger()
 
@@ -33,6 +37,10 @@ class BaseAgent:
 
     每个 Agent 是一个独立的异步任务，持续监听自己的消息队列，
     收到消息后调用 LLM 进行推理，并根据结果执行工具或向其他 Agent 发起请求。
+
+    支持:
+    - 记忆系统: Agent 可在处理消息时存取记忆，记忆可按 scope 跨 Agent/跨 Workflow 共享
+    - 自定义参数: 通过 config.parameters 传递的参数可在子类中使用
     """
 
     def __init__(
@@ -41,6 +49,7 @@ class BaseAgent:
         message_bus: MessageBus,
         llm_gateway: LLMGateway,
         tool_registry: ToolRegistry,
+        memory_store: MemoryStore | None = None,
     ) -> None:
         self.config = config
         self.id = config.id
@@ -49,6 +58,10 @@ class BaseAgent:
         self.llm_gateway = llm_gateway
         self.tool_registry = tool_registry
         self.state = AgentState.IDLE
+        self.parameters: dict[str, Any] = config.parameters
+
+        # 记忆系统
+        self.memory: MemoryStore = memory_store or InMemoryStore()
 
         # 当前活跃的工作流上下文（由 Orchestrator 注入）
         self._contexts: dict[str, WorkflowContext] = {}
@@ -126,21 +139,25 @@ class BaseAgent:
     async def handle_message(self, message: Message) -> dict:
         """处理消息的核心逻辑
 
-        1. 构建 Prompt
-        2. 调用 LLM
-        3. 解析输出，判断是否需要调用工具
-        4. 执行工具调用（循环直到 LLM 给出最终回答）
+        1. 从记忆中检索相关信息
+        2. 构建 Prompt（含记忆上下文）
+        3. 调用 LLM
+        4. 将结果存入记忆
         5. 返回结果
         """
         context = self.get_context(message.workflow_id)
         tool_schemas = self.tool_registry.get_schemas(self.config.tools)
 
-        # 构建初始消息列表
+        # 从记忆中检索相关信息
+        memories = await self._recall_memories(message)
+
+        # 构建初始消息列表（含记忆）
         messages = PromptBuilder.build(
             agent_config=self.config,
             incoming_message=message,
             context=context,
             tool_schemas=tool_schemas if tool_schemas else None,
+            memories=memories,
         )
 
         # 多轮工具调用循环（最多 10 轮）
@@ -152,9 +169,6 @@ class BaseAgent:
                 tools=tool_schemas if tool_schemas else None,
             )
 
-            # 如果 LLM 没有请求工具调用，直接返回
-            # 注: 当前简化版本不解析 function calling 的结构化输出，
-            # 后续迭代中将集成完整的 tool_calls 解析
             if llm_response.content:
                 result = {
                     "status": "success",
@@ -167,6 +181,9 @@ class BaseAgent:
                 if context:
                     context.add_message(message)
 
+                # 将对话存入记忆
+                await self._store_memory(message, result)
+
                 self.state = AgentState.RUNNING
                 return result
 
@@ -174,6 +191,80 @@ class BaseAgent:
             "status": "error",
             "error": "Max tool call rounds exceeded",
         }
+
+    async def _recall_memories(self, message: Message) -> list[MemoryRecord]:
+        """从记忆系统中检索与当前任务相关的记忆"""
+        if not self.config.memory.enabled:
+            return []
+
+        all_memories: list[MemoryRecord] = []
+
+        # 检索 Agent 自身的记忆
+        if "agent" in self.config.memory.scopes:
+            agent_memories = await self.memory.search(
+                query="",
+                scope=MemoryScope.AGENT,
+                agent_id=self.id,
+                limit=5,
+            )
+            all_memories.extend(agent_memories)
+
+        # 检索工作流共享记忆
+        if "workflow" in self.config.memory.scopes and message.workflow_id:
+            workflow_memories = await self.memory.search(
+                query="",
+                scope=MemoryScope.WORKFLOW,
+                workflow_id=message.workflow_id,
+                limit=5,
+            )
+            all_memories.extend(workflow_memories)
+
+        # 检索全局记忆
+        if "global" in self.config.memory.scopes:
+            global_memories = await self.memory.search(
+                query="",
+                scope=MemoryScope.GLOBAL,
+                limit=3,
+            )
+            all_memories.extend(global_memories)
+
+        return all_memories
+
+    async def _store_memory(self, message: Message, result: dict) -> None:
+        """将对话结果存入记忆"""
+        if not self.config.memory.enabled:
+            return
+
+        task_content = message.payload.get("task", message.payload.get("content", ""))
+        response_content = result.get("content", "")
+
+        # 存入 Agent 私有记忆
+        agent_record = MemoryRecord(
+            key=f"task:{message.id[:8]}",
+            value={"task": task_content, "response": response_content[:500]},
+            scope=MemoryScope.AGENT,
+            agent_id=self.id,
+            workflow_id=message.workflow_id,
+            ttl=self.config.memory.default_ttl,
+        )
+        await self.memory.store(agent_record)
+
+        # 存入工作流共享记忆（其他 Agent 可见）
+        if message.workflow_id:
+            workflow_record = MemoryRecord(
+                key=f"{self.id}:result:{message.id[:8]}",
+                value={
+                    "agent": self.id,
+                    "task": task_content,
+                    "result": response_content[:500],
+                    "status": result.get("status"),
+                },
+                scope=MemoryScope.WORKFLOW,
+                agent_id=self.id,
+                workflow_id=message.workflow_id,
+                ttl=self.config.memory.default_ttl,
+            )
+            await self.memory.store(workflow_record)
 
     async def _send_response(self, original_message: Message, result: dict) -> None:
         """发送处理结果"""
@@ -187,7 +278,9 @@ class BaseAgent:
         )
         await self.message_bus.send(response)
 
-    async def send_request(self, target_agent_id: str, payload: dict, workflow_id: str = "") -> None:
+    async def send_request(
+        self, target_agent_id: str, payload: dict, workflow_id: str = ""
+    ) -> None:
         """主动向其他 Agent 发起请求"""
         if target_agent_id not in self.config.can_request:
             logger.warning(
@@ -211,6 +304,82 @@ class BaseAgent:
             sender=self.id,
             target=target_agent_id,
         )
+
+
+# ============================================================
+# Agent 工厂 — 根据配置创建不同类型的 Agent
+# ============================================================
+
+# 内置 Agent 类型注册表
+_AGENT_TYPE_REGISTRY: dict[str, type[BaseAgent]] = {
+    "base": BaseAgent,
+}
+
+
+def register_agent_type(type_name: str, agent_class: type[BaseAgent]) -> None:
+    """注册自定义 Agent 类型"""
+    _AGENT_TYPE_REGISTRY[type_name] = agent_class
+    logger.info("agent_type.registered", type_name=type_name, cls=agent_class.__name__)
+
+
+def create_agent(
+    config: AgentConfig,
+    message_bus: MessageBus,
+    llm_gateway: LLMGateway,
+    tool_registry: ToolRegistry,
+    memory_store: MemoryStore | None = None,
+) -> BaseAgent:
+    """Agent 工厂方法
+
+    根据 config.agent_type 或 config.class_path 创建对应的 Agent 实例:
+    - agent_type 匹配内置注册表 → 使用注册的类
+    - class_path 指定了自定义类路径 → 动态导入该类
+    - 都没有 → 使用 BaseAgent
+    """
+    agent_cls: type[BaseAgent]
+
+    # 优先使用 class_path 动态导入
+    if config.class_path:
+        agent_cls = _import_agent_class(config.class_path)
+    elif config.agent_type in _AGENT_TYPE_REGISTRY:
+        agent_cls = _AGENT_TYPE_REGISTRY[config.agent_type]
+    else:
+        logger.warning(
+            "agent_factory.unknown_type",
+            agent_type=config.agent_type,
+            fallback="BaseAgent",
+        )
+        agent_cls = BaseAgent
+
+    return agent_cls(
+        config=config,
+        message_bus=message_bus,
+        llm_gateway=llm_gateway,
+        tool_registry=tool_registry,
+        memory_store=memory_store,
+    )
+
+
+def _import_agent_class(class_path: str) -> type[BaseAgent]:
+    """动态导入 Agent 类
+
+    class_path 格式: "module.path.ClassName"
+    例如: "autoflow.agents.planner.PlannerAgent"
+    """
+    try:
+        module_path, class_name = class_path.rsplit(".", 1)
+        module = importlib.import_module(module_path)
+        cls = getattr(module, class_name)
+        if not (isinstance(cls, type) and issubclass(cls, BaseAgent)):
+            raise TypeError(f"{class_path} is not a subclass of BaseAgent")
+        return cls
+    except (ImportError, AttributeError, ValueError) as e:
+        raise ImportError(f"Cannot import agent class '{class_path}': {e}") from e
+
+
+# ============================================================
+# AgentRegistry
+# ============================================================
 
 
 class AgentRegistry:
