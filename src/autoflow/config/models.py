@@ -88,6 +88,7 @@ class AgentConfig(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     parameters: dict[str, Any] = Field(default_factory=dict)  # 自定义扩展参数
     persona: PersonaConfig = Field(default_factory=PersonaConfig)  # 人设配置
+    skills: list[str] = Field(default_factory=list)  # 关联的 skill 名称列表
 
 
 # ============================================================

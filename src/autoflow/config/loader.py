@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TypeVar
 
+import structlog
 import yaml
 from pydantic import BaseModel
 
 from autoflow.config.models import AgentConfig, AutoFlowConfig, PersonaConfig, WorkflowConfig
+
+logger = structlog.get_logger()
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -164,3 +168,60 @@ def load_all_workflow_configs(
     for yml_file in sorted(directory.glob("*.yml")):
         configs.append(load_workflow_config(yml_file))
     return configs
+
+
+# ============================================================
+# Skill 加载
+# ============================================================
+
+
+def load_skill_content(skills_dir: Path, skill_names: list[str]) -> str:
+    """加载指定 skill 的内容，拼接返回
+
+    支持两种格式:
+    - 目录格式: skills_dir/{name}/SKILL.md (+ scripts/ 子目录)
+    - 单文件格式: skills_dir/{name}.md
+
+    目录格式优先于单文件格式。
+    """
+    skills_dir = Path(skills_dir)
+    if not skills_dir.exists():
+        logger.info("skill.skills_dir_not_found", path=str(skills_dir))
+        return ""
+
+    sections: list[str] = []
+    for name in skill_names:
+        # 优先查找目录格式
+        skill_dir = skills_dir / name
+        if skill_dir.is_dir():
+            skill_md = skill_dir / "SKILL.md"
+            if skill_md.exists():
+                content = skill_md.read_text(encoding="utf-8")
+                content = _resolve_script_refs(content, skill_dir / "scripts")
+                sections.append(content)
+            else:
+                logger.warning("skill.missing_skill_md", skill=name)
+            continue
+
+        # 回退到单文件格式
+        skill_file = skills_dir / f"{name}.md"
+        if skill_file.exists():
+            sections.append(skill_file.read_text(encoding="utf-8"))
+        else:
+            logger.warning("skill.not_found", skill=name)
+
+    return "\n\n---\n\n".join(sections)
+
+
+def _resolve_script_refs(content: str, scripts_dir: Path) -> str:
+    """将 @script:xxx 标记替换为绝对路径的 shell_exec 指引"""
+
+    def _replacer(m: re.Match) -> str:
+        script_name = m.group(1)
+        script_path = scripts_dir / script_name
+        if script_path.exists():
+            return f"使用 shell_exec 工具执行 {script_path.resolve()}"
+        logger.warning("skill.script_not_found", script=script_name)
+        return m.group(0)  # 保留原始文本
+
+    return re.sub(r"@script:(\S+)", _replacer, content)
