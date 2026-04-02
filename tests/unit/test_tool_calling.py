@@ -8,6 +8,7 @@ import pytest
 
 from autoflow.config.models import ModelConfig
 from autoflow.llm.gateway import LLMGateway, LLMResponse
+from autoflow.tools.base import ToolRegistry, ToolResult
 
 
 class TestLLMResponseToolCalls:
@@ -95,3 +96,44 @@ class TestGatewayParsesToolCalls:
 
         assert result.tool_calls is None
         assert result.content == "Hello world"
+
+
+class TestToolRegistryExecute:
+    @pytest.mark.asyncio
+    async def test_execute_known_tool(self):
+        """已注册的工具应正常执行"""
+        registry = ToolRegistry()
+
+        mock_tool = MagicMock()
+        mock_tool.name = "test_tool"
+        mock_tool.execute = AsyncMock(return_value=ToolResult(success=True, output="ok"))
+
+        registry.register(mock_tool)
+
+        result = await registry.execute("test_tool", arguments={"key": "value"})
+        assert result.success is True
+        assert result.output == "ok"
+        mock_tool.execute.assert_called_once_with(key="value")
+
+    @pytest.mark.asyncio
+    async def test_execute_unknown_tool(self):
+        """未注册的工具应返回错误 ToolResult"""
+        registry = ToolRegistry()
+        result = await registry.execute("nonexistent", arguments={})
+        assert result.success is False
+        assert "Unknown tool" in result.error
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_exception(self):
+        """工具抛异常应被捕获并返回 error ToolResult"""
+        registry = ToolRegistry()
+
+        mock_tool = MagicMock()
+        mock_tool.name = "boom_tool"
+        mock_tool.execute = AsyncMock(side_effect=RuntimeError("kaboom"))
+
+        registry.register(mock_tool)
+
+        result = await registry.execute("boom_tool", arguments={"x": 1})
+        assert result.success is False
+        assert "kaboom" in result.error

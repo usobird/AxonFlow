@@ -78,23 +78,25 @@ class ToolRegistry:
         """列出所有已注册工具名称"""
         return list(self._tools.keys())
 
-    async def execute(self, tool_name: str, **kwargs) -> ToolResult:
-        """执行指定工具"""
+    async def execute(self, tool_name: str, arguments: dict | None = None) -> ToolResult:
+        """根据工具名称调度执行
+
+        Args:
+            tool_name: 工具名称
+            arguments: 工具参数字典，会解包为 **kwargs 传给 tool.execute()
+        """
         tool = self._tools.get(tool_name)
         if tool is None:
             return ToolResult(
                 success=False,
-                error=f"Tool not found: {tool_name}",
+                error=f"Unknown tool: {tool_name}. Available: {', '.join(self._tools.keys())}",
             )
         try:
-            logger.info("tool.executing", name=tool_name, kwargs=kwargs)
-            result = await tool.execute(**kwargs)
-            logger.info(
-                "tool.completed",
-                name=tool_name,
-                success=result.success,
-            )
+            args = arguments or {}
+            logger.info("tool.executing", name=tool_name, args=args)
+            result = await tool.execute(**args)
+            logger.info("tool.completed", name=tool_name, success=result.success)
             return result
         except Exception as e:
             logger.error("tool.failed", name=tool_name, error=str(e))
-            return ToolResult(success=False, error=str(e))
+            return ToolResult(success=False, error=f"Tool execution failed: {e}")
