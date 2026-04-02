@@ -28,6 +28,7 @@ class LLMResponse:
 
     content: str
     model: str
+    tool_calls: list[dict] | None = None
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
@@ -191,16 +192,33 @@ class LLMGateway:
             if not content.strip() and hasattr(msg, "reasoning_content") and msg.reasoning_content:
                 content = msg.reasoning_content
 
+            # 解析 tool_calls
+            tool_calls = None
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                tool_calls = [
+                    {
+                        "id": tc.id,
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                        "type": tc.type,
+                    }
+                    for tc in msg.tool_calls
+                ]
+
             logger.info(
                 "llm.call_completed",
                 model=model_str,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                has_tool_calls=tool_calls is not None,
             )
 
             return LLMResponse(
                 content=content,
                 model=model_str,
+                tool_calls=tool_calls,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 total_tokens=input_tokens + output_tokens,
