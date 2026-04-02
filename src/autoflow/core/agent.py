@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -17,6 +19,7 @@ from autoflow.llm.prompt_builder import PromptBuilder
 from autoflow.memory.base import MemoryRecord, MemoryScope, MemoryStore
 from autoflow.memory.local import InMemoryStore
 from autoflow.messaging.base import MessageBus
+from autoflow.observability.execution_log import ExecutionLogEntry, ExecutionLogger
 from autoflow.tools.base import ToolRegistry
 
 logger = structlog.get_logger()
@@ -50,6 +53,7 @@ class BaseAgent:
         llm_gateway: LLMGateway,
         tool_registry: ToolRegistry,
         memory_store: MemoryStore | None = None,
+        execution_logger: ExecutionLogger | None = None,
     ) -> None:
         self.config = config
         self.id = config.id
@@ -62,6 +66,9 @@ class BaseAgent:
 
         # 记忆系统
         self.memory: MemoryStore = memory_store or InMemoryStore()
+
+        # 执行日志
+        self.execution_logger = execution_logger
 
         # 当前活跃的工作流上下文（由 Orchestrator 注入）
         self._contexts: dict[str, WorkflowContext] = {}
@@ -137,21 +144,17 @@ class BaseAgent:
         }
 
     async def handle_message(self, message: Message) -> dict:
-        """处理消息的核心逻辑
+        """处理消息的核心逻辑 — 含多轮工具调用循环
 
-        1. 从记忆中检索相关信息
-        2. 构建 Prompt（含记忆上下文）
-        3. 调用 LLM
-        4. 将结果存入记忆
-        5. 返回结果
+        1. 构建 Prompt（含记忆上下文）
+        2. 循环：调用 LLM → 检查 tool_calls → 执行工具 → 回填结果 → 重新调用 LLM
+        3. LLM 产出 text content 时结束循环
         """
         context = self.get_context(message.workflow_id)
         tool_schemas = self.tool_registry.get_schemas(self.config.tools)
 
-        # 从记忆中检索相关信息
         memories = await self._recall_memories(message)
 
-        # 构建初始消息列表（含记忆）
         messages = PromptBuilder.build(
             agent_config=self.config,
             incoming_message=message,
@@ -160,37 +163,154 @@ class BaseAgent:
             memories=memories,
         )
 
-        # 多轮工具调用循环（最多 10 轮）
         max_tool_rounds = 10
-        for _round in range(max_tool_rounds):
+        for round_num in range(1, max_tool_rounds + 1):
             llm_response = await self.llm_gateway.chat(
                 messages=messages,
                 model_config=self.config.model,
                 tools=tool_schemas if tool_schemas else None,
             )
 
-            if llm_response.content:
+            # Case 1: LLM 返回了 tool_calls
+            if llm_response.tool_calls:
+                # 追加 assistant message（含 tool_calls 信息）
+                assistant_msg: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": llm_response.content or "",
+                    "tool_calls": llm_response.tool_calls,
+                }
+                messages.append(assistant_msg)
+
+                # 逐个执行 tool call
+                for tc in llm_response.tool_calls:
+                    tc_id = tc["id"]
+                    func_name = tc["function"]["name"]
+                    func_args_raw = tc["function"]["arguments"]
+
+                    # 解析 JSON 参数
+                    try:
+                        func_args = (
+                            json.loads(func_args_raw)
+                            if isinstance(func_args_raw, str)
+                            else func_args_raw
+                        )
+                    except json.JSONDecodeError as e:
+                        error_msg = f"Invalid JSON in tool arguments: {e}"
+                        self._log_execution(
+                            workflow_id=message.workflow_id,
+                            action="tool_error",
+                            tool_name=func_name,
+                            arguments={
+                                "raw": func_args_raw[:500]
+                                if isinstance(func_args_raw, str)
+                                else str(func_args_raw)[:500]
+                            },
+                            error=error_msg,
+                            round_num=round_num,
+                        )
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc_id,
+                                "content": f"Error: {error_msg}",
+                            }
+                        )
+                        continue
+
+                    # 执行工具
+                    tool_result = await self.tool_registry.execute(func_name, arguments=func_args)
+
+                    if tool_result.success:
+                        result_content = tool_result.output or ""
+                        self._log_execution(
+                            workflow_id=message.workflow_id,
+                            action="tool_call",
+                            tool_name=func_name,
+                            arguments=func_args,
+                            result=result_content,
+                            round_num=round_num,
+                        )
+                    else:
+                        result_content = f"Error: {tool_result.error}"
+                        self._log_execution(
+                            workflow_id=message.workflow_id,
+                            action="tool_error",
+                            tool_name=func_name,
+                            arguments=func_args,
+                            error=tool_result.error,
+                            round_num=round_num,
+                        )
+
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": result_content,
+                        }
+                    )
+
+                continue  # 回到循环，让 LLM 看到工具结果
+
+            # Case 2: LLM 返回了 text content（无 tool_calls）
+            if llm_response.content and llm_response.content.strip():
                 result = {
                     "status": "success",
                     "content": llm_response.content,
                     "model": llm_response.model,
                     "tokens_used": llm_response.total_tokens,
                 }
-
-                # 记录到上下文
                 if context:
                     context.add_message(message)
-
-                # 将对话存入记忆
                 await self._store_memory(message, result)
-
                 self.state = AgentState.RUNNING
                 return result
 
+            # Case 3: 既无 tool_calls 也无 content — 给 LLM 重试机会
+            logger.warning(
+                "agent.empty_llm_response",
+                agent_id=self.id,
+                round=round_num,
+            )
+
+        # 10 轮用尽
+        self._log_execution(
+            workflow_id=message.workflow_id,
+            action="tool_error",
+            tool_name=None,
+            arguments=None,
+            error="Max tool call rounds exceeded",
+            round_num=max_tool_rounds,
+        )
         return {
             "status": "error",
             "error": "Max tool call rounds exceeded",
         }
+
+    def _log_execution(
+        self,
+        workflow_id: str,
+        action: str,
+        tool_name: str | None,
+        arguments: dict | None,
+        round_num: int,
+        result: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """记录执行日志（如果 logger 存在）"""
+        if self.execution_logger is None:
+            return
+        entry = ExecutionLogEntry(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            workflow_id=workflow_id,
+            agent_id=self.id,
+            action=action,
+            tool_name=tool_name,
+            arguments=arguments,
+            result=result,
+            error=error,
+            round=round_num,
+        )
+        self.execution_logger.log(entry)
 
     async def _recall_memories(self, message: Message) -> list[MemoryRecord]:
         """从记忆系统中检索与当前任务相关的记忆"""
@@ -328,6 +448,7 @@ def create_agent(
     llm_gateway: LLMGateway,
     tool_registry: ToolRegistry,
     memory_store: MemoryStore | None = None,
+    execution_logger: ExecutionLogger | None = None,
 ) -> BaseAgent:
     """Agent 工厂方法
 
@@ -357,6 +478,7 @@ def create_agent(
         llm_gateway=llm_gateway,
         tool_registry=tool_registry,
         memory_store=memory_store,
+        execution_logger=execution_logger,
     )
 
 
