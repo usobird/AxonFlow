@@ -22,6 +22,7 @@ from autoflow.core.workflow import WorkflowResult
 from autoflow.llm.gateway import LLMGateway
 from autoflow.messaging.base import MessageBus
 from autoflow.messaging.memory_bus import InMemoryMessageBus
+from autoflow.observability.execution_log import ExecutionLogger
 from autoflow.observability.logger import setup_logging
 from autoflow.tools.base import Tool, ToolRegistry
 from autoflow.tools.file_ops import FileReadTool, FileWriteTool
@@ -56,6 +57,7 @@ class AutoFlowEngine:
         self._agent_registry: AgentRegistry | None = None
         self._scheduler: Scheduler | None = None
         self._memory_store: InMemoryStore | None = None
+        self._execution_logger: ExecutionLogger | None = None
         self._agent_tasks: list[asyncio.Task] = []
         self._running = False
         self._initialized = False
@@ -114,6 +116,11 @@ class AutoFlowEngine:
 
         # 5.5 初始化共享记忆存储
         self._memory_store = InMemoryStore()
+
+        # 5.6 初始化执行日志
+        self._execution_logger = ExecutionLogger(
+            workspace_dir=self.config.workspace_dir,
+        )
 
         # 6. 加载并注册 Agent
         self._agent_registry = AgentRegistry()
@@ -214,6 +221,7 @@ class AutoFlowEngine:
                 llm_gateway=self._llm_gateway,
                 tool_registry=self._tool_registry,
                 memory_store=self._memory_store,
+                execution_logger=self._execution_logger,
             )
             self._agent_registry.register(agent)
 
