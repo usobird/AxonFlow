@@ -114,3 +114,62 @@ class TestLoadSkillContent:
         nonexistent = tmp_path / "no-such-dir"
         result = load_skill_content(nonexistent, ["anything"])
         assert result == ""
+
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from autoflow.core.agent import BaseAgent
+from autoflow.core.message import Message, MessageType
+from autoflow.llm.gateway import LLMResponse
+from autoflow.messaging.memory_bus import InMemoryMessageBus
+from autoflow.tools.base import ToolRegistry
+
+
+class TestAgentSkillIntegration:
+    @pytest.mark.asyncio
+    async def test_agent_loads_skills_into_prompt(self, tmp_path):
+        """Agent 配置了 skills 时，handle_message 应加载 skill 内容到 prompt"""
+        skill_dir = tmp_path / "skills" / "test-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("# Test Skill\nDo testing stuff.")
+
+        config = AgentConfig(
+            id="skill-agent",
+            name="Skill Agent",
+            role="You are a test agent.",
+            model=ModelConfig(provider="openai", name="test-model"),
+            skills=["test-skill"],
+        )
+
+        bus = InMemoryMessageBus()
+        registry = ToolRegistry()
+        gateway = MagicMock()
+        gateway.chat = AsyncMock(
+            return_value=LLMResponse(content="Done.", model="test-model"),
+        )
+
+        agent = BaseAgent(
+            config=config,
+            message_bus=bus,
+            llm_gateway=gateway,
+            tool_registry=registry,
+            skills_dir=tmp_path / "skills",
+        )
+
+        msg = Message(
+            sender="user",
+            receiver="skill-agent",
+            type=MessageType.TASK_REQUEST,
+            payload={"task": "test"},
+            workflow_id="wf-skill",
+        )
+
+        await agent.handle_message(msg)
+
+        call_args = gateway.chat.call_args
+        messages = call_args[1]["messages"]
+        system_content = messages[0]["content"]
+        assert "Test Skill" in system_content
+        assert "testing stuff" in system_content

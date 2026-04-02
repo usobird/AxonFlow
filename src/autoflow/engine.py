@@ -212,6 +212,7 @@ class AutoFlowEngine:
         assert self._tool_registry is not None
 
         agents_dir = self._config_dir / "agents"
+        skills_dir = self._config_dir / "skills"
         agent_configs = load_all_agent_configs(agents_dir)
 
         for cfg in agent_configs:
@@ -222,6 +223,7 @@ class AutoFlowEngine:
                 tool_registry=self._tool_registry,
                 memory_store=self._memory_store,
                 execution_logger=self._execution_logger,
+                skills_dir=skills_dir,
             )
             self._agent_registry.register(agent)
 

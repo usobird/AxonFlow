@@ -7,10 +7,12 @@ import importlib
 import json
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 import structlog
 
+from autoflow.config.loader import load_skill_content
 from autoflow.config.models import AgentConfig
 from autoflow.core.context import WorkflowContext
 from autoflow.core.message import Message, MessageType
@@ -54,6 +56,7 @@ class BaseAgent:
         tool_registry: ToolRegistry,
         memory_store: MemoryStore | None = None,
         execution_logger: ExecutionLogger | None = None,
+        skills_dir: Path | None = None,
     ) -> None:
         self.config = config
         self.id = config.id
@@ -69,6 +72,9 @@ class BaseAgent:
 
         # 执行日志
         self.execution_logger = execution_logger
+
+        # Skills 目录
+        self._skills_dir = skills_dir
 
         # 当前活跃的工作流上下文（由 Orchestrator 注入）
         self._contexts: dict[str, WorkflowContext] = {}
@@ -155,12 +161,20 @@ class BaseAgent:
 
         memories = await self._recall_memories(message)
 
+        # 加载 skill 内容
+        skill_content: str | None = None
+        if self.config.skills and self._skills_dir:
+            loaded = load_skill_content(self._skills_dir, self.config.skills)
+            if loaded:
+                skill_content = loaded
+
         messages = PromptBuilder.build(
             agent_config=self.config,
             incoming_message=message,
             context=context,
             tool_schemas=tool_schemas if tool_schemas else None,
             memories=memories,
+            skill_content=skill_content,
         )
 
         max_tool_rounds = 10
@@ -449,6 +463,7 @@ def create_agent(
     tool_registry: ToolRegistry,
     memory_store: MemoryStore | None = None,
     execution_logger: ExecutionLogger | None = None,
+    skills_dir: Path | None = None,
 ) -> BaseAgent:
     """Agent 工厂方法
 
@@ -479,6 +494,7 @@ def create_agent(
         tool_registry=tool_registry,
         memory_store=memory_store,
         execution_logger=execution_logger,
+        skills_dir=skills_dir,
     )
 
 

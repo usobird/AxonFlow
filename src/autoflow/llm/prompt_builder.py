@@ -18,6 +18,7 @@ class PromptBuilder:
         context: WorkflowContext | None = None,
         tool_schemas: list[dict] | None = None,
         memories: list[MemoryRecord] | None = None,
+        skill_content: str | None = None,
     ) -> list[dict]:
         """构建完整的 prompt 消息列表
 
@@ -40,6 +41,10 @@ class PromptBuilder:
         # 1b. 角色描述
         if agent_config.role:
             system_parts.append(agent_config.role)
+
+        # 1c. Skill 内容注入（在 role 之后，tool schemas 之前）
+        if skill_content:
+            system_parts.append(f"\n## Skills\n{skill_content}")
 
         if context and context.shared_state:
             state_str = "\n".join(f"- {k}: {v}" for k, v in context.shared_state.items())
