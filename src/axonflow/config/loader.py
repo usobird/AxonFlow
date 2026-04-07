@@ -30,6 +30,13 @@ def load_global_config(path: Path | str = "config/axonflow.yaml") -> AxonFlowCon
     """加载全局配置"""
     path = Path(path)
     if not path.exists():
+        logger.warning(
+            "config.global_config_not_found",
+            path=str(path.resolve()),
+            cwd=str(Path.cwd()),
+            hint="Using default config (model=gpt-4o). "
+            "Make sure to run from the project root or pass the correct config_dir.",
+        )
         return AxonFlowConfig()
     data = _load_yaml(path)
     return AxonFlowConfig(**data)
