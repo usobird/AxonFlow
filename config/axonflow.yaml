@@ -1,4 +1,4 @@
-# AutoFlow 全局配置
+# AxonFlow 全局配置
 redis:
   url: "redis://localhost:6379"
   max_connections: 10

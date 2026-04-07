@@ -1,4 +1,4 @@
-# AutoFlow 技术实现方案
+# AxonFlow 技术实现方案
 
 > 版本: v1.0  
 > 日期: 2026-03-31  
@@ -29,7 +29,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        AutoFlow Engine                       │
+│                        AxonFlow Engine                       │
 │                                                              │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │
 │  │ Agent A  │  │ Agent B  │  │ Agent C  │  │ Agent N  │    │
@@ -203,7 +203,7 @@ class RedisMessageBus(MessageBus):
 
     async def send(self, message: Message):
         """发送消息到目标 Agent 的 Stream"""
-        stream_key = f"autoflow:agent:{message.receiver}:inbox"
+        stream_key = f"axonflow:agent:{message.receiver}:inbox"
         await self.redis.xadd(
             stream_key,
             {"data": message.to_json()},
@@ -211,7 +211,7 @@ class RedisMessageBus(MessageBus):
 
     async def receive(self, agent_id: str, block_ms: int = 5000) -> Message | None:
         """从自己的 inbox Stream 中读取消息"""
-        stream_key = f"autoflow:agent:{agent_id}:inbox"
+        stream_key = f"axonflow:agent:{agent_id}:inbox"
         group_name = f"agent-{agent_id}-group"
         consumer_name = f"agent-{agent_id}-consumer"
 
@@ -234,7 +234,7 @@ class RedisMessageBus(MessageBus):
 
     async def get_queue_depth(self, agent_id: str) -> int:
         """获取指定 Agent 的消息队列深度"""
-        stream_key = f"autoflow:agent:{agent_id}:inbox"
+        stream_key = f"axonflow:agent:{agent_id}:inbox"
         return await self.redis.xlen(stream_key)
 ```
 
@@ -932,7 +932,7 @@ class WebhookNotifier:
 │          主机 / VM               │
 │                                  │
 │  ┌───────────┐  ┌────────────┐  │
-│  │ AutoFlow  │  │   Redis    │  │
+│  │ AxonFlow  │  │   Redis    │  │
 │  │  Engine   │──│  (Streams) │  │
 │  │           │  │            │  │
 │  └───────────┘  └────────────┘  │
@@ -947,7 +947,7 @@ class WebhookNotifier:
 # docker-compose.yml
 version: "3.8"
 services:
-  autoflow:
+  axonflow:
     build: .
     environment:
       - REDIS_URL=redis://redis:6379

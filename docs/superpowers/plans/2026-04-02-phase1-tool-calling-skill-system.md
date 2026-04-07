@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让 AutoFlow Agent 能真正调用工具（tool calling 闭环）、加载高阶策略（skill 系统）、并记录所有执行过程（执行日志），构成 Phase 2 自举工作流的基础。
+**Goal:** 让 AxonFlow Agent 能真正调用工具（tool calling 闭环）、加载高阶策略（skill 系统）、并记录所有执行过程（执行日志），构成 Phase 2 自举工作流的基础。
 
 **Architecture:** 三个子系统协同工作——(A) LLMGateway 解析 tool_calls，BaseAgent 实现多轮工具调用循环；(B) Skill 系统通过 loader 加载 SKILL.md 并注入 system prompt；(C) ExecutionLogger 双写（内存+JSONL）记录所有 tool 调用和错误。子系统 C 被 A 集成使用，B 独立于 A/C。
 
@@ -16,7 +16,7 @@
 
 | File | Responsibility |
 |------|---------------|
-| `src/autoflow/observability/execution_log.py` | ExecutionLogEntry dataclass + ExecutionLogger (dual-write: memory + JSONL) |
+| `src/axonflow/observability/execution_log.py` | ExecutionLogEntry dataclass + ExecutionLogger (dual-write: memory + JSONL) |
 | `tests/unit/test_execution_log.py` | ExecutionLogger 单元测试 |
 | `tests/unit/test_tool_calling.py` | Tool calling 闭环测试（mock LLM） |
 | `tests/unit/test_skill_loader.py` | Skill 加载、@script 替换、边界处理测试 |
@@ -27,22 +27,22 @@
 
 | File | What Changes |
 |------|-------------|
-| `src/autoflow/llm/gateway.py:26-33` | LLMResponse 加 `tool_calls` 字段 |
-| `src/autoflow/llm/gateway.py:187-207` | chat() 解析 `msg.tool_calls` 并填入 LLMResponse |
-| `src/autoflow/tools/base.py:81-100` | ToolRegistry.execute() 改签名为 `(tool_name, arguments: dict)` |
-| `src/autoflow/core/agent.py:139-193` | handle_message() 实现多轮工具调用循环 |
-| `src/autoflow/core/agent.py:46-53` | BaseAgent.__init__() 接受 execution_logger 参数 |
-| `src/autoflow/config/models.py:70-91` | AgentConfig 加 `skills: list[str]` 字段 |
-| `src/autoflow/config/loader.py` | 新增 `load_skill_content()` 和 `_resolve_script_refs()` |
-| `src/autoflow/llm/prompt_builder.py:30-69` | system prompt 组装加入 skill 内容 |
-| `src/autoflow/engine.py:81-128` | initialize() 创建 ExecutionLogger 并传给 Agent |
+| `src/axonflow/llm/gateway.py:26-33` | LLMResponse 加 `tool_calls` 字段 |
+| `src/axonflow/llm/gateway.py:187-207` | chat() 解析 `msg.tool_calls` 并填入 LLMResponse |
+| `src/axonflow/tools/base.py:81-100` | ToolRegistry.execute() 改签名为 `(tool_name, arguments: dict)` |
+| `src/axonflow/core/agent.py:139-193` | handle_message() 实现多轮工具调用循环 |
+| `src/axonflow/core/agent.py:46-53` | BaseAgent.__init__() 接受 execution_logger 参数 |
+| `src/axonflow/config/models.py:70-91` | AgentConfig 加 `skills: list[str]` 字段 |
+| `src/axonflow/config/loader.py` | 新增 `load_skill_content()` 和 `_resolve_script_refs()` |
+| `src/axonflow/llm/prompt_builder.py:30-69` | system prompt 组装加入 skill 内容 |
+| `src/axonflow/engine.py:81-128` | initialize() 创建 ExecutionLogger 并传给 Agent |
 
 ---
 
 ## Task 1: ExecutionLogger — 数据模型与双写
 
 **Files:**
-- Create: `src/autoflow/observability/execution_log.py`
+- Create: `src/axonflow/observability/execution_log.py`
 - Create: `tests/unit/test_execution_log.py`
 
 - [ ] **Step 1: Write the failing tests**
@@ -58,7 +58,7 @@ import json
 
 import pytest
 
-from autoflow.observability.execution_log import ExecutionLogEntry, ExecutionLogger
+from axonflow.observability.execution_log import ExecutionLogEntry, ExecutionLogger
 
 
 def _make_entry(**overrides) -> ExecutionLogEntry:
@@ -92,14 +92,14 @@ class TestExecutionLogEntry:
 
 class TestExecutionLogger:
     def test_log_and_get_entries(self):
-        logger = ExecutionLogger(workspace_dir="/tmp/test-autoflow-logs")
+        logger = ExecutionLogger(workspace_dir="/tmp/test-axonflow-logs")
         entry = _make_entry()
         logger.log(entry)
         assert len(logger.get_entries()) == 1
         assert logger.get_entries()[0] is entry
 
     def test_filter_by_workflow_id(self):
-        logger = ExecutionLogger(workspace_dir="/tmp/test-autoflow-logs")
+        logger = ExecutionLogger(workspace_dir="/tmp/test-axonflow-logs")
         logger.log(_make_entry(workflow_id="wf-001"))
         logger.log(_make_entry(workflow_id="wf-002"))
         logger.log(_make_entry(workflow_id="wf-001"))
@@ -108,7 +108,7 @@ class TestExecutionLogger:
         assert len(results) == 2
 
     def test_filter_by_agent_id(self):
-        logger = ExecutionLogger(workspace_dir="/tmp/test-autoflow-logs")
+        logger = ExecutionLogger(workspace_dir="/tmp/test-axonflow-logs")
         logger.log(_make_entry(agent_id="agent-a"))
         logger.log(_make_entry(agent_id="agent-b"))
 
@@ -116,7 +116,7 @@ class TestExecutionLogger:
         assert len(results) == 1
 
     def test_filter_by_action(self):
-        logger = ExecutionLogger(workspace_dir="/tmp/test-autoflow-logs")
+        logger = ExecutionLogger(workspace_dir="/tmp/test-axonflow-logs")
         logger.log(_make_entry(action="tool_call"))
         logger.log(_make_entry(action="tool_error"))
         logger.log(_make_entry(action="llm_error"))
@@ -125,7 +125,7 @@ class TestExecutionLogger:
         assert len(results) == 1
 
     def test_combined_filters(self):
-        logger = ExecutionLogger(workspace_dir="/tmp/test-autoflow-logs")
+        logger = ExecutionLogger(workspace_dir="/tmp/test-axonflow-logs")
         logger.log(_make_entry(workflow_id="wf-001", agent_id="a", action="tool_call"))
         logger.log(_make_entry(workflow_id="wf-001", agent_id="b", action="tool_call"))
         logger.log(_make_entry(workflow_id="wf-002", agent_id="a", action="tool_error"))
@@ -171,11 +171,11 @@ class TestExecutionLogger:
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/unit/test_execution_log.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'autoflow.observability.execution_log'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'axonflow.observability.execution_log'`
 
 - [ ] **Step 3: Implement ExecutionLogEntry and ExecutionLogger**
 
-Create `src/autoflow/observability/execution_log.py`:
+Create `src/axonflow/observability/execution_log.py`:
 
 ```python
 """执行日志 — 记录 tool 调用、错误、异常"""
@@ -262,7 +262,7 @@ Expected: All PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/autoflow/observability/execution_log.py tests/unit/test_execution_log.py
+git add src/axonflow/observability/execution_log.py tests/unit/test_execution_log.py
 git commit -m "feat: add ExecutionLogger with dual-write (memory + JSONL)"
 ```
 
@@ -271,7 +271,7 @@ git commit -m "feat: add ExecutionLogger with dual-write (memory + JSONL)"
 ## Task 2: LLMResponse — 添加 tool_calls 字段
 
 **Files:**
-- Modify: `src/autoflow/llm/gateway.py:26-33`
+- Modify: `src/axonflow/llm/gateway.py:26-33`
 - Modify: `tests/conftest.py:9` (import 会自动兼容)
 
 - [ ] **Step 1: Write the failing test**
@@ -285,7 +285,7 @@ Create `tests/unit/test_tool_calling.py`:
 
 from __future__ import annotations
 
-from autoflow.llm.gateway import LLMResponse
+from axonflow.llm.gateway import LLMResponse
 
 
 class TestLLMResponseToolCalls:
@@ -314,7 +314,7 @@ Expected: FAIL — `TypeError: __init__() got an unexpected keyword argument 'to
 
 - [ ] **Step 3: Add tool_calls field to LLMResponse**
 
-In `src/autoflow/llm/gateway.py`, modify the `LLMResponse` dataclass:
+In `src/axonflow/llm/gateway.py`, modify the `LLMResponse` dataclass:
 
 ```python
 @dataclass
@@ -337,7 +337,7 @@ Expected: All PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/autoflow/llm/gateway.py tests/unit/test_tool_calling.py
+git add src/axonflow/llm/gateway.py tests/unit/test_tool_calling.py
 git commit -m "feat: add tool_calls field to LLMResponse"
 ```
 
@@ -346,7 +346,7 @@ git commit -m "feat: add tool_calls field to LLMResponse"
 ## Task 3: LLMGateway.chat() — 解析 tool_calls
 
 **Files:**
-- Modify: `src/autoflow/llm/gateway.py:187-207`
+- Modify: `src/axonflow/llm/gateway.py:187-207`
 - Test: `tests/unit/test_tool_calling.py` (append)
 
 - [ ] **Step 1: Write the failing test**
@@ -358,8 +358,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from autoflow.config.models import ModelConfig
-from autoflow.llm.gateway import LLMGateway
+from axonflow.config.models import ModelConfig
+from axonflow.llm.gateway import LLMGateway
 
 
 class TestGatewayParsesToolCalls:
@@ -438,7 +438,7 @@ Expected: FAIL — `result.tool_calls` is `None` even when LLM returned tool_cal
 
 - [ ] **Step 3: Modify chat() to parse tool_calls**
 
-In `src/autoflow/llm/gateway.py`, replace the section after `msg = response.choices[0].message` (lines 187-207):
+In `src/axonflow/llm/gateway.py`, replace the section after `msg = response.choices[0].message` (lines 187-207):
 
 ```python
             msg = response.choices[0].message
@@ -494,7 +494,7 @@ Expected: All 75+ tests PASS
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/autoflow/llm/gateway.py tests/unit/test_tool_calling.py
+git add src/axonflow/llm/gateway.py tests/unit/test_tool_calling.py
 git commit -m "feat: parse tool_calls from LLM response in gateway.chat()"
 ```
 
@@ -503,7 +503,7 @@ git commit -m "feat: parse tool_calls from LLM response in gateway.chat()"
 ## Task 4: ToolRegistry.execute() — 签名调整
 
 **Files:**
-- Modify: `src/autoflow/tools/base.py:81-100`
+- Modify: `src/axonflow/tools/base.py:81-100`
 - Test: `tests/unit/test_tool_calling.py` (append)
 
 The existing `ToolRegistry.execute()` uses `**kwargs`. The spec wants `execute(tool_name, arguments: dict)` so that the agent loop can pass a parsed dict directly. We change the signature to accept `arguments: dict` and spread it internally.
@@ -513,7 +513,7 @@ The existing `ToolRegistry.execute()` uses `**kwargs`. The spec wants `execute(t
 Append to `tests/unit/test_tool_calling.py`:
 
 ```python
-from autoflow.tools.base import ToolRegistry, ToolResult
+from axonflow.tools.base import ToolRegistry, ToolResult
 
 
 class TestToolRegistryExecute:
@@ -565,7 +565,7 @@ Expected: FAIL — `TypeError: execute() got an unexpected keyword argument 'arg
 
 - [ ] **Step 3: Change ToolRegistry.execute() signature**
 
-In `src/autoflow/tools/base.py`, replace the existing `execute` method (lines 81-100):
+In `src/axonflow/tools/base.py`, replace the existing `execute` method (lines 81-100):
 
 ```python
     async def execute(self, tool_name: str, arguments: dict | None = None) -> ToolResult:
@@ -605,7 +605,7 @@ Expected: All tests PASS (existing tests that call `registry.execute(name, **kwa
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/autoflow/tools/base.py tests/unit/test_tool_calling.py
+git add src/axonflow/tools/base.py tests/unit/test_tool_calling.py
 git commit -m "feat: ToolRegistry.execute() accepts arguments dict for dispatch"
 ```
 
@@ -614,9 +614,9 @@ git commit -m "feat: ToolRegistry.execute() accepts arguments dict for dispatch"
 ## Task 5: BaseAgent.handle_message() — 多轮工具调用循环
 
 **Files:**
-- Modify: `src/autoflow/core/agent.py:46-53` (constructor)
-- Modify: `src/autoflow/core/agent.py:139-193` (handle_message)
-- Modify: `src/autoflow/core/agent.py:325-360` (create_agent factory)
+- Modify: `src/axonflow/core/agent.py:46-53` (constructor)
+- Modify: `src/axonflow/core/agent.py:139-193` (handle_message)
+- Modify: `src/axonflow/core/agent.py:325-360` (create_agent factory)
 - Test: `tests/unit/test_tool_calling.py` (append)
 
 This is the core task — wiring up the tool calling loop.
@@ -628,11 +628,11 @@ Append to `tests/unit/test_tool_calling.py`:
 ```python
 import json
 
-from autoflow.config.models import AgentConfig, ModelConfig
-from autoflow.core.agent import BaseAgent, create_agent
-from autoflow.core.message import Message, MessageType
-from autoflow.messaging.memory_bus import InMemoryMessageBus
-from autoflow.observability.execution_log import ExecutionLogger
+from axonflow.config.models import AgentConfig, ModelConfig
+from axonflow.core.agent import BaseAgent, create_agent
+from axonflow.core.message import Message, MessageType
+from axonflow.messaging.memory_bus import InMemoryMessageBus
+from axonflow.observability.execution_log import ExecutionLogger
 
 
 def _make_message(task: str = "test task") -> Message:
@@ -866,7 +866,7 @@ Expected: FAIL — `TypeError: __init__() got an unexpected keyword argument 'ex
 
 - [ ] **Step 3: Modify BaseAgent to accept execution_logger**
 
-In `src/autoflow/core/agent.py`, update `BaseAgent.__init__()`:
+In `src/axonflow/core/agent.py`, update `BaseAgent.__init__()`:
 
 ```python
     def __init__(
@@ -894,7 +894,7 @@ In `src/autoflow/core/agent.py`, update `BaseAgent.__init__()`:
 Add the import at the top of the file:
 
 ```python
-from autoflow.observability.execution_log import ExecutionLogEntry, ExecutionLogger
+from axonflow.observability.execution_log import ExecutionLogEntry, ExecutionLogger
 ```
 
 Also add `import json` and `from datetime import datetime, timezone` to the imports.
@@ -1062,7 +1062,7 @@ Replace `handle_message()` (lines 139-193) with:
 
 - [ ] **Step 5: Update create_agent() to accept and pass execution_logger**
 
-In `src/autoflow/core/agent.py`, update the `create_agent()` function signature and body:
+In `src/axonflow/core/agent.py`, update the `create_agent()` function signature and body:
 
 ```python
 def create_agent(
@@ -1111,7 +1111,7 @@ Expected: All tests PASS (existing tests create BaseAgent without execution_logg
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/autoflow/core/agent.py tests/unit/test_tool_calling.py
+git add src/axonflow/core/agent.py tests/unit/test_tool_calling.py
 git commit -m "feat: implement multi-turn tool calling loop in BaseAgent.handle_message()"
 ```
 
@@ -1120,15 +1120,15 @@ git commit -m "feat: implement multi-turn tool calling loop in BaseAgent.handle_
 ## Task 6: Engine — 创建 ExecutionLogger 并传递给 Agent
 
 **Files:**
-- Modify: `src/autoflow/engine.py:81-128` (initialize)
-- Modify: `src/autoflow/engine.py:200-223` (_load_agents)
+- Modify: `src/axonflow/engine.py:81-128` (initialize)
+- Modify: `src/axonflow/engine.py:200-223` (_load_agents)
 
 - [ ] **Step 1: Add ExecutionLogger import and creation in engine.py**
 
-In `src/autoflow/engine.py`, add the import:
+In `src/axonflow/engine.py`, add the import:
 
 ```python
-from autoflow.observability.execution_log import ExecutionLogger
+from axonflow.observability.execution_log import ExecutionLogger
 ```
 
 In `__init__()`, add:
@@ -1167,7 +1167,7 @@ Expected: All tests PASS
 - [ ] **Step 3: Commit**
 
 ```bash
-git add src/autoflow/engine.py
+git add src/axonflow/engine.py
 git commit -m "feat: create ExecutionLogger in engine and pass to agents"
 ```
 
@@ -1176,7 +1176,7 @@ git commit -m "feat: create ExecutionLogger in engine and pass to agents"
 ## Task 7: AgentConfig — 添加 skills 字段
 
 **Files:**
-- Modify: `src/autoflow/config/models.py:70-91`
+- Modify: `src/axonflow/config/models.py:70-91`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1189,7 +1189,7 @@ Create `tests/unit/test_skill_loader.py`:
 
 from __future__ import annotations
 
-from autoflow.config.models import AgentConfig, ModelConfig
+from axonflow.config.models import AgentConfig, ModelConfig
 
 
 class TestAgentConfigSkills:
@@ -1213,7 +1213,7 @@ Expected: FAIL — `unexpected keyword argument 'skills'`
 
 - [ ] **Step 3: Add skills field to AgentConfig**
 
-In `src/autoflow/config/models.py`, add to `AgentConfig`:
+In `src/axonflow/config/models.py`, add to `AgentConfig`:
 
 ```python
     skills: list[str] = Field(default_factory=list)  # Skill 名称列表，如 ["code-review", "tdd"]
@@ -1229,7 +1229,7 @@ Expected: All PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/autoflow/config/models.py tests/unit/test_skill_loader.py
+git add src/axonflow/config/models.py tests/unit/test_skill_loader.py
 git commit -m "feat: add skills field to AgentConfig"
 ```
 
@@ -1238,7 +1238,7 @@ git commit -m "feat: add skills field to AgentConfig"
 ## Task 8: Skill Loader — load_skill_content() 和 _resolve_script_refs()
 
 **Files:**
-- Modify: `src/autoflow/config/loader.py`
+- Modify: `src/axonflow/config/loader.py`
 - Create: `config/skills/code-review/SKILL.md`
 - Create: `config/skills/code-review/scripts/lint.sh`
 - Test: `tests/unit/test_skill_loader.py` (append)
@@ -1250,7 +1250,7 @@ Append to `tests/unit/test_skill_loader.py`:
 ```python
 from pathlib import Path
 
-from autoflow.config.loader import load_skill_content, _resolve_script_refs
+from axonflow.config.loader import load_skill_content, _resolve_script_refs
 
 
 class TestResolveScriptRefs:
@@ -1351,11 +1351,11 @@ class TestLoadSkillContent:
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/unit/test_skill_loader.py -v`
-Expected: FAIL — `ImportError: cannot import name 'load_skill_content' from 'autoflow.config.loader'`
+Expected: FAIL — `ImportError: cannot import name 'load_skill_content' from 'axonflow.config.loader'`
 
 - [ ] **Step 3: Implement load_skill_content() and _resolve_script_refs()**
 
-In `src/autoflow/config/loader.py`, add imports at top:
+In `src/axonflow/config/loader.py`, add imports at top:
 
 ```python
 import re
@@ -1483,7 +1483,7 @@ Expected: All PASS
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/autoflow/config/loader.py config/skills/ tests/unit/test_skill_loader.py
+git add src/axonflow/config/loader.py config/skills/ tests/unit/test_skill_loader.py
 git commit -m "feat: add skill loader with @script resolution and example skill"
 ```
 
@@ -1492,7 +1492,7 @@ git commit -m "feat: add skill loader with @script resolution and example skill"
 ## Task 9: PromptBuilder — 注入 Skill 内容
 
 **Files:**
-- Modify: `src/autoflow/llm/prompt_builder.py:30-69`
+- Modify: `src/axonflow/llm/prompt_builder.py:30-69`
 - Test: `tests/unit/test_prompt_builder.py` (append)
 
 - [ ] **Step 1: Write the failing tests**
@@ -1545,7 +1545,7 @@ Expected: FAIL — `TypeError: build() got an unexpected keyword argument 'skill
 
 - [ ] **Step 3: Add skill_content parameter to PromptBuilder.build()**
 
-In `src/autoflow/llm/prompt_builder.py`, update the `build()` method signature and body:
+In `src/axonflow/llm/prompt_builder.py`, update the `build()` method signature and body:
 
 ```python
     @staticmethod
@@ -1649,7 +1649,7 @@ Expected: All tests PASS
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/autoflow/llm/prompt_builder.py tests/unit/test_prompt_builder.py
+git add src/axonflow/llm/prompt_builder.py tests/unit/test_prompt_builder.py
 git commit -m "feat: inject skill content into system prompt via PromptBuilder"
 ```
 
@@ -1658,7 +1658,7 @@ git commit -m "feat: inject skill content into system prompt via PromptBuilder"
 ## Task 10: BaseAgent — 加载并传递 Skill 内容
 
 **Files:**
-- Modify: `src/autoflow/core/agent.py` (handle_message — add skill loading)
+- Modify: `src/axonflow/core/agent.py` (handle_message — add skill loading)
 
 Now we wire up the skill loading in `handle_message()` so that skills configured on the agent are loaded and passed to `PromptBuilder.build()`.
 
@@ -1671,12 +1671,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from autoflow.config.models import AgentConfig, ModelConfig
-from autoflow.core.agent import BaseAgent
-from autoflow.core.message import Message, MessageType
-from autoflow.llm.gateway import LLMResponse
-from autoflow.messaging.memory_bus import InMemoryMessageBus
-from autoflow.tools.base import ToolRegistry
+from axonflow.config.models import AgentConfig, ModelConfig
+from axonflow.core.agent import BaseAgent
+from axonflow.core.message import Message, MessageType
+from axonflow.llm.gateway import LLMResponse
+from axonflow.messaging.memory_bus import InMemoryMessageBus
+from axonflow.tools.base import ToolRegistry
 
 
 class TestAgentSkillIntegration:
@@ -1736,7 +1736,7 @@ Expected: FAIL — `TypeError: __init__() got an unexpected keyword argument 'sk
 
 - [ ] **Step 3: Add skills_dir to BaseAgent and wire up skill loading**
 
-In `src/autoflow/core/agent.py`, update `__init__()` to accept `skills_dir`:
+In `src/axonflow/core/agent.py`, update `__init__()` to accept `skills_dir`:
 
 ```python
     def __init__(
@@ -1758,7 +1758,7 @@ Add import:
 
 ```python
 from pathlib import Path
-from autoflow.config.loader import load_skill_content
+from axonflow.config.loader import load_skill_content
 ```
 
 In `handle_message()`, before building messages, load skill content:
@@ -1822,7 +1822,7 @@ Expected: All tests PASS
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/autoflow/core/agent.py tests/unit/test_skill_loader.py
+git add src/axonflow/core/agent.py tests/unit/test_skill_loader.py
 git commit -m "feat: agent loads skill content and injects into prompt"
 ```
 
@@ -1831,11 +1831,11 @@ git commit -m "feat: agent loads skill content and injects into prompt"
 ## Task 11: Engine — 传递 skills_dir 给 Agent
 
 **Files:**
-- Modify: `src/autoflow/engine.py` (_load_agents)
+- Modify: `src/axonflow/engine.py` (_load_agents)
 
 - [ ] **Step 1: Update engine to pass skills_dir**
 
-In `src/autoflow/engine.py`, update `_load_agents()`:
+In `src/axonflow/engine.py`, update `_load_agents()`:
 
 ```python
     async def _load_agents(self) -> None:
@@ -1875,7 +1875,7 @@ Expected: All tests PASS
 - [ ] **Step 3: Commit**
 
 ```bash
-git add src/autoflow/engine.py
+git add src/axonflow/engine.py
 git commit -m "feat: engine passes skills_dir to agent factory"
 ```
 

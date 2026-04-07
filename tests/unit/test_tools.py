@@ -67,7 +67,7 @@ class TestFileTools:
         read_tool = FileReadTool()
 
         test_file = str(tmp_path / "test.txt")
-        content = "Hello, AutoFlow!"
+        content = "Hello, AxonFlow!"
 
         # 写入
         write_result = await write_tool.execute(path=test_file, content=content)

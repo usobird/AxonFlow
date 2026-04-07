@@ -40,14 +40,14 @@ class TestExecutionLogEntry:
 
 class TestExecutionLogger:
     def test_log_and_get_entries(self):
-        logger = ExecutionLogger(workspace_dir="/tmp/test-autoflow-logs")
+        logger = ExecutionLogger(workspace_dir="/tmp/test-axonflow-logs")
         entry = _make_entry()
         logger.log(entry)
         assert len(logger.get_entries()) == 1
         assert logger.get_entries()[0] is entry
 
     def test_filter_by_workflow_id(self):
-        logger = ExecutionLogger(workspace_dir="/tmp/test-autoflow-logs")
+        logger = ExecutionLogger(workspace_dir="/tmp/test-axonflow-logs")
         logger.log(_make_entry(workflow_id="wf-001"))
         logger.log(_make_entry(workflow_id="wf-002"))
         logger.log(_make_entry(workflow_id="wf-001"))
@@ -56,7 +56,7 @@ class TestExecutionLogger:
         assert len(results) == 2
 
     def test_filter_by_agent_id(self):
-        logger = ExecutionLogger(workspace_dir="/tmp/test-autoflow-logs")
+        logger = ExecutionLogger(workspace_dir="/tmp/test-axonflow-logs")
         logger.log(_make_entry(agent_id="agent-a"))
         logger.log(_make_entry(agent_id="agent-b"))
 
@@ -64,7 +64,7 @@ class TestExecutionLogger:
         assert len(results) == 1
 
     def test_filter_by_action(self):
-        logger = ExecutionLogger(workspace_dir="/tmp/test-autoflow-logs")
+        logger = ExecutionLogger(workspace_dir="/tmp/test-axonflow-logs")
         logger.log(_make_entry(action="tool_call"))
         logger.log(_make_entry(action="tool_error"))
         logger.log(_make_entry(action="llm_error"))
@@ -73,7 +73,7 @@ class TestExecutionLogger:
         assert len(results) == 1
 
     def test_combined_filters(self):
-        logger = ExecutionLogger(workspace_dir="/tmp/test-autoflow-logs")
+        logger = ExecutionLogger(workspace_dir="/tmp/test-axonflow-logs")
         logger.log(_make_entry(workflow_id="wf-001", agent_id="a", action="tool_call"))
         logger.log(_make_entry(workflow_id="wf-001", agent_id="b", action="tool_call"))
         logger.log(_make_entry(workflow_id="wf-002", agent_id="a", action="tool_error"))

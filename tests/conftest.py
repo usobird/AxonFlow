@@ -1,4 +1,4 @@
-"""Pytest fixtures for AutoFlow tests."""
+"""Pytest fixtures for AxonFlow tests."""
 
 from __future__ import annotations
 
