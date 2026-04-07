@@ -2,8 +2,8 @@
 
 import pytest
 
-from autoflow.core.message import Message, MessageType
-from autoflow.messaging.memory_bus import InMemoryMessageBus
+from axonflow.core.message import Message, MessageType
+from axonflow.messaging.memory_bus import InMemoryMessageBus
 
 
 class TestInMemoryMessageBus:

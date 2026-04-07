@@ -2,7 +2,7 @@
 
 import pytest
 
-from autoflow.config.models import (
+from axonflow.config.models import (
     AgentConfig,
     FlowConfig,
     JoinConfig,
@@ -12,22 +12,22 @@ from autoflow.config.models import (
     SupervisorConfig,
     WorkflowConfig,
 )
-from autoflow.core.agent import AgentRegistry, BaseAgent
-from autoflow.core.message import Message, MessageType
-from autoflow.core.orchestrator_factory import (
+from axonflow.core.agent import AgentRegistry, BaseAgent
+from axonflow.core.message import Message, MessageType
+from axonflow.core.orchestrator_factory import (
     _ORCHESTRATOR_REGISTRY,
     create_orchestrator,
     register_orchestrator_type,
 )
-from autoflow.core.workflow import (
+from axonflow.core.workflow import (
     BaseOrchestrator,
     FlatOrchestrator,
     WorkflowOrchestrator,
     WorkflowResult,
 )
-from autoflow.llm.gateway import LLMGateway
-from autoflow.messaging.memory_bus import InMemoryMessageBus
-from autoflow.tools.base import ToolRegistry
+from axonflow.llm.gateway import LLMGateway
+from axonflow.messaging.memory_bus import InMemoryMessageBus
+from axonflow.tools.base import ToolRegistry
 
 
 def _make_agent(agent_id: str, bus: InMemoryMessageBus) -> BaseAgent:
@@ -200,7 +200,7 @@ class TestOrchestratorFactory:
             ),
         )
         registry = _make_registry(["a", "supervisor"], bus)
-        from autoflow.core.supervisor import SupervisorOrchestrator
+        from axonflow.core.supervisor import SupervisorOrchestrator
 
         orch = create_orchestrator(config, registry, bus, llm_gateway=LLMGateway())
         assert isinstance(orch, SupervisorOrchestrator)

@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "autoflow"
+name = "axonflow"
 version = "0.1.0"
 description = "Multi-Agent Autonomous Workflow Engine — 基于多智能体的自治工作流引擎"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
-authors = [{ name = "AutoFlow Contributors" }]
+authors = [{ name = "AxonFlow Contributors" }]
 keywords = ["multi-agent", "workflow", "llm", "automation"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -56,10 +56,10 @@ dev = [
 ]
 
 [project.scripts]
-autoflow = "autoflow.cli.app:main"
+axonflow = "axonflow.cli.app:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/autoflow"]
+packages = ["src/axonflow"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,4 +1,4 @@
-# AutoFlow
+# AxonFlow
 
 **基于多智能体的自治工作流引擎** — 让智能体像团队一样协作，实现 24/7 全自动生产力。
 
@@ -14,13 +14,13 @@ pip install -e ".[dev]"
 export OPENAI_API_KEY="your-api-key"
 
 # 查看系统状态
-autoflow status
+axonflow status
 
 # 运行工作流
-autoflow run dev-pipeline --input "实现一个快速排序函数"
+axonflow run dev-pipeline --input "实现一个快速排序函数"
 
 # 启动守护进程
-autoflow start --daemon
+axonflow start --daemon
 ```
 
 ### Windows (PowerShell)
@@ -37,19 +37,19 @@ pip install -e ".[dev]"
 $env:OPENAI_API_KEY = "your_api_key"
 
 # 查看系统状态
-python -m autoflow status
+python -m axonflow status
 
 # 运行工作流
-python -m autoflow run dev-pipeline --input "实现一个快速排序函数"
+python -m axonflow run dev-pipeline --input "实现一个快速排序函数"
 
 # 启动守护进程（Ctrl+C 退出）
-python -m autoflow start --daemon
+python -m axonflow start --daemon
 ```
 
 ## 项目结构
 
 ```
-src/autoflow/
+src/axonflow/
 ├── core/          # Agent 运行时、消息协议、工作流引擎
 ├── messaging/     # 消息总线（Redis Streams / InMemory）
 ├── llm/           # LLM 统一网关（多模型支持）

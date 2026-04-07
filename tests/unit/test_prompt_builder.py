@@ -1,9 +1,9 @@
 """PromptBuilder 测试"""
 
-from autoflow.config.models import AgentConfig, ModelConfig
-from autoflow.core.message import Message, MessageType
-from autoflow.llm.prompt_builder import PromptBuilder
-from autoflow.memory.base import MemoryRecord, MemoryScope
+from axonflow.config.models import AgentConfig, ModelConfig
+from axonflow.core.message import Message, MessageType
+from axonflow.llm.prompt_builder import PromptBuilder
+from axonflow.memory.base import MemoryRecord, MemoryScope
 
 
 def _make_config() -> AgentConfig:
@@ -119,3 +119,39 @@ class TestPromptBuilder:
         assert "file_read" in system_content
         assert "相关记忆" in system_content
         assert "prev-result" in system_content
+
+    def test_build_with_skill_content(self):
+        """skill_content 应出现在 system prompt 中"""
+        messages = PromptBuilder.build(
+            agent_config=_make_config(),
+            incoming_message=_make_message(),
+            skill_content="# TDD Skill\nAlways write tests first.",
+        )
+        system_content = messages[0]["content"]
+        assert "TDD Skill" in system_content
+        assert "write tests first" in system_content
+
+    def test_skill_content_between_role_and_tools(self):
+        """skill 内容应在 role 之后、tool 描述之前"""
+        tool_schemas = [
+            {"type": "function", "function": {"name": "file_read", "parameters": {}}},
+        ]
+        messages = PromptBuilder.build(
+            agent_config=_make_config(),
+            incoming_message=_make_message(),
+            tool_schemas=tool_schemas,
+            skill_content="# Review Skill\nCheck code quality.",
+        )
+        system_content = messages[0]["content"]
+        role_pos = system_content.find("测试用的智能体")
+        skill_pos = system_content.find("Review Skill")
+        tool_pos = system_content.find("file_read")
+        assert role_pos < skill_pos < tool_pos
+
+    def test_build_without_skill_content(self):
+        """不传 skill_content 时不影响现有行为"""
+        messages = PromptBuilder.build(
+            agent_config=_make_config(),
+            incoming_message=_make_message(),
+        )
+        assert len(messages) == 2

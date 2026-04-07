@@ -5,15 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from autoflow.config.loader import (
+from axonflow.config.loader import (
     _deep_merge,
     load_agent_config,
     load_agent_config_from_dir,
     load_all_agent_configs,
 )
-from autoflow.config.models import AgentConfig, ModelConfig, PersonaConfig
-from autoflow.core.message import Message, MessageType
-from autoflow.llm.prompt_builder import PromptBuilder
+from axonflow.config.models import AgentConfig, ModelConfig, PersonaConfig
+from axonflow.core.message import Message, MessageType
+from axonflow.llm.prompt_builder import PromptBuilder
 
 
 class TestPersonaLoading:

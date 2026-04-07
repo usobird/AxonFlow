@@ -1,4 +1,4 @@
-# AutoFlow 产品需求文档 (PRD)
+# AxonFlow 产品需求文档 (PRD)
 
 > 版本: v1.0  
 > 日期: 2026-03-31  
@@ -9,13 +9,13 @@
 ## 1. 项目概述
 
 ### 1.1 项目名称
-**AutoFlow** — 基于多智能体的自治工作流引擎
+**AxonFlow** — 基于多智能体的自治工作流引擎
 
 ### 1.2 项目愿景
 让智能体像团队一样协作，实现 24/7 全自动生产力。
 
 ### 1.3 项目定位
-AutoFlow 是一款基于多智能体系统（Multi-Agent System, MAS）的轻量级自动化工作流搭建平台。通过为不同智能体分配独立职责，智能体之间能够自发地相互发起请求、反馈结果并迭代优化，无需用户实时干预，即可实现复杂任务从开发到交付的全流程闭环。
+AxonFlow 是一款基于多智能体系统（Multi-Agent System, MAS）的轻量级自动化工作流搭建平台。通过为不同智能体分配独立职责，智能体之间能够自发地相互发起请求、反馈结果并迭代优化，无需用户实时干预，即可实现复杂任务从开发到交付的全流程闭环。
 
 ### 1.4 目标用户
 | 用户类型 | 使用场景 |
@@ -195,30 +195,30 @@ Agent-Visualizer (可视化专员):
 
 ```bash
 # 启动系统
-autoflow start
+axonflow start
 
 # 以守护进程模式启动
-autoflow start --daemon
+axonflow start --daemon
 
 # 提交一个任务到工作流
-autoflow run <workflow_name> --input "你的需求描述"
+axonflow run <workflow_name> --input "你的需求描述"
 
 # 查看当前运行状态
-autoflow status
+axonflow status
 
 # 查看工作流执行历史
-autoflow history [workflow_id]
+axonflow history [workflow_id]
 
 # 停止系统
-autoflow stop
+axonflow stop
 
 # 查看实时日志
-autoflow logs [--follow]
+axonflow logs [--follow]
 
 # 管理智能体
-autoflow agent list
-autoflow agent add <config_file>
-autoflow agent remove <agent_id>
+axonflow agent list
+axonflow agent add <config_file>
+axonflow agent remove <agent_id>
 ```
 
 ### 4.2 配置文件示例

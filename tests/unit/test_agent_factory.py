@@ -2,17 +2,17 @@
 
 import pytest
 
-from autoflow.config.models import AgentConfig, MemoryConfig, ModelConfig
-from autoflow.core.agent import (
+from axonflow.config.models import AgentConfig, MemoryConfig, ModelConfig
+from axonflow.core.agent import (
     BaseAgent,
     _AGENT_TYPE_REGISTRY,
     create_agent,
     register_agent_type,
 )
-from autoflow.llm.gateway import LLMGateway
-from autoflow.memory.local import InMemoryStore
-from autoflow.messaging.memory_bus import InMemoryMessageBus
-from autoflow.tools.base import ToolRegistry
+from axonflow.llm.gateway import LLMGateway
+from axonflow.memory.local import InMemoryStore
+from axonflow.messaging.memory_bus import InMemoryMessageBus
+from axonflow.tools.base import ToolRegistry
 
 
 def _make_agent_config(**overrides) -> AgentConfig:

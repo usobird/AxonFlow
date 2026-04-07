@@ -1,16 +1,16 @@
-# AutoFlow 项目目录结构
+# AxonFlow 项目目录结构
 
 ```
-autoflow/
+axonflow/
 ├── docs/                          # 项目文档
 │   ├── PRD.md                     # 产品需求文档
 │   ├── TECHNICAL_DESIGN.md        # 技术实现方案
 │   └── PROJECT_STRUCTURE.md       # 本文件
 │
 ├── src/
-│   └── autoflow/                  # 主包
+│   └── axonflow/                  # 主包
 │       ├── __init__.py
-│       ├── __main__.py            # python -m autoflow 入口
+│       ├── __main__.py            # python -m axonflow 入口
 │       │
 │       ├── core/                  # 核心模块
 │       │   ├── __init__.py
@@ -70,19 +70,19 @@ autoflow/
 │       │   ├── app.py             # Typer CLI 主应用
 │       │   ├── commands/
 │       │   │   ├── __init__.py
-│       │   │   ├── start.py       # autoflow start
-│       │   │   ├── run.py         # autoflow run
-│       │   │   ├── status.py      # autoflow status
-│       │   │   ├── stop.py        # autoflow stop
-│       │   │   ├── logs.py        # autoflow logs
-│       │   │   ├── history.py     # autoflow history
-│       │   │   └── agent.py       # autoflow agent *
+│       │   │   ├── start.py       # axonflow start
+│       │   │   ├── run.py         # axonflow run
+│       │   │   ├── status.py      # axonflow status
+│       │   │   ├── stop.py        # axonflow stop
+│       │   │   ├── logs.py        # axonflow logs
+│       │   │   ├── history.py     # axonflow history
+│       │   │   └── agent.py       # axonflow agent *
 │       │   └── utils.py           # CLI 工具函数
 │       │
-│       └── engine.py              # AutoFlow 引擎主入口
+│       └── engine.py              # AxonFlow 引擎主入口
 │
 ├── config/                        # 用户配置目录
-│   ├── autoflow.yaml              # 全局配置
+│   ├── axonflow.yaml              # 全局配置
 │   ├── agents/                    # 智能体配置
 │   │   ├── coder.yaml
 │   │   ├── tester.yaml
@@ -170,7 +170,7 @@ cli/
 
 ```toml
 [project]
-name = "autoflow"
+name = "axonflow"
 version = "0.1.0"
 requires-python = ">=3.11"
 
@@ -209,5 +209,5 @@ dev = [
 ]
 
 [project.scripts]
-autoflow = "autoflow.cli.app:main"
+axonflow = "axonflow.cli.app:main"
 ```
