@@ -1,6 +1,6 @@
 """Message 数据模型测试"""
 
-from autoflow.core.message import Message, MessageType
+from axonflow.core.message import Message, MessageType
 
 
 class TestMessage:

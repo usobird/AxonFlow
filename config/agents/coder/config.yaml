@@ -10,12 +10,13 @@ agent:
     - 建议的测试要点
   model:
     provider: openai
-    name: gpt-4o
+    name: qwen3-32b
     temperature: 0.2
     max_tokens: 4096
+    api_base: "http://redservingapi.devops.xiaohongshu.com/v1"
     api_key_env: OPENAI_API_KEY
     fallback_models:
-      - gpt-4o-mini
+      - qwen3-4b
   tools:
     - file_write
     - file_read

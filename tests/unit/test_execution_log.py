@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from autoflow.observability.execution_log import ExecutionLogEntry, ExecutionLogger
+from axonflow.observability.execution_log import ExecutionLogEntry, ExecutionLogger
 
 
 def _make_entry(**overrides) -> ExecutionLogEntry:

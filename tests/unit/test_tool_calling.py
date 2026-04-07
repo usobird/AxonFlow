@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from autoflow.config.models import ModelConfig
-from autoflow.llm.gateway import LLMGateway, LLMResponse
-from autoflow.tools.base import ToolRegistry, ToolResult
+from axonflow.config.models import ModelConfig
+from axonflow.llm.gateway import LLMGateway, LLMResponse
+from axonflow.tools.base import ToolRegistry, ToolResult
 
 
 class TestLLMResponseToolCalls:
@@ -145,11 +145,11 @@ class TestToolRegistryExecute:
 
 import json
 
-from autoflow.config.models import AgentConfig, ModelConfig
-from autoflow.core.agent import BaseAgent, create_agent
-from autoflow.core.message import Message, MessageType
-from autoflow.messaging.memory_bus import InMemoryMessageBus
-from autoflow.observability.execution_log import ExecutionLogger
+from axonflow.config.models import AgentConfig, ModelConfig
+from axonflow.core.agent import BaseAgent, create_agent
+from axonflow.core.message import Message, MessageType
+from axonflow.messaging.memory_bus import InMemoryMessageBus
+from axonflow.observability.execution_log import ExecutionLogger
 
 
 def _make_message(task: str = "test task") -> Message:

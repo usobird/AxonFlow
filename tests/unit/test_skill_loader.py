@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from autoflow.config.loader import load_skill_content, _resolve_script_refs
-from autoflow.config.models import AgentConfig, ModelConfig
+from axonflow.config.loader import load_skill_content, _resolve_script_refs
+from axonflow.config.models import AgentConfig, ModelConfig
 
 
 class TestAgentConfigSkills:
@@ -120,11 +120,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from autoflow.core.agent import BaseAgent
-from autoflow.core.message import Message, MessageType
-from autoflow.llm.gateway import LLMResponse
-from autoflow.messaging.memory_bus import InMemoryMessageBus
-from autoflow.tools.base import ToolRegistry
+from axonflow.core.agent import BaseAgent
+from axonflow.core.message import Message, MessageType
+from axonflow.llm.gateway import LLMResponse
+from axonflow.messaging.memory_bus import InMemoryMessageBus
+from axonflow.tools.base import ToolRegistry
 
 
 class TestAgentSkillIntegration:

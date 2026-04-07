@@ -2,8 +2,8 @@
 
 import pytest
 
-from autoflow.memory.base import MemoryRecord, MemoryScope, MemoryStore
-from autoflow.memory.local import InMemoryStore
+from axonflow.memory.base import MemoryRecord, MemoryScope, MemoryStore
+from axonflow.memory.local import InMemoryStore
 
 
 class TestMemoryRecord:

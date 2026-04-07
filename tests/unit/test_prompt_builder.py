@@ -1,9 +1,9 @@
 """PromptBuilder 测试"""
 
-from autoflow.config.models import AgentConfig, ModelConfig
-from autoflow.core.message import Message, MessageType
-from autoflow.llm.prompt_builder import PromptBuilder
-from autoflow.memory.base import MemoryRecord, MemoryScope
+from axonflow.config.models import AgentConfig, ModelConfig
+from axonflow.core.message import Message, MessageType
+from axonflow.llm.prompt_builder import PromptBuilder
+from axonflow.memory.base import MemoryRecord, MemoryScope
 
 
 def _make_config() -> AgentConfig:
