@@ -1,4 +1,4 @@
-"""Allow running AutoFlow as: python -m autoflow"""
+"""Allow running AxonFlow as: python -m axonflow"""
 
 from axonflow.cli.app import main
 

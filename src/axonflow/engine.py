@@ -1,4 +1,4 @@
-"""AutoFlow 引擎主入口 — 组装所有模块并启动系统"""
+"""AxonFlow 引擎主入口 — 组装所有模块并启动系统"""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ logger = structlog.get_logger()
 
 
 class AxonFlowEngine:
-    """AutoFlow 引擎
+    """AxonFlow 引擎
 
     职责:
     1. 加载配置

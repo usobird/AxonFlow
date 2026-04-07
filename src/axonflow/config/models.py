@@ -220,7 +220,7 @@ class PluginsConfig(BaseModel):
 
 
 class AxonFlowConfig(BaseModel):
-    """AutoFlow 全局配置"""
+    """AxonFlow 全局配置"""
 
     redis: RedisConfig = Field(default_factory=RedisConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)

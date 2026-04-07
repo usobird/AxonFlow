@@ -26,7 +26,7 @@ def _load_yaml(path: Path) -> dict:
     return data
 
 
-def load_global_config(path: Path | str = "config/autoflow.yaml") -> AxonFlowConfig:
+def load_global_config(path: Path | str = "config/axonflow.yaml") -> AxonFlowConfig:
     """加载全局配置"""
     path = Path(path)
     if not path.exists():

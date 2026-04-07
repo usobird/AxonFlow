@@ -19,6 +19,6 @@ DEFAULT_QUEUE_BLOCK_MS = 5000
 DEFAULT_TOOL_TIMEOUT = 30
 
 # Redis Stream 键前缀
-REDIS_KEY_PREFIX = "autoflow"
+REDIS_KEY_PREFIX = "axonflow"
 REDIS_AGENT_INBOX_PATTERN = f"{REDIS_KEY_PREFIX}:agent:{{agent_id}}:inbox"
 REDIS_WORKFLOW_STATE_PATTERN = f"{REDIS_KEY_PREFIX}:workflow:{{workflow_id}}:state"

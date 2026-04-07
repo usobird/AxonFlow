@@ -1,4 +1,4 @@
-"""AutoFlow CLI 主入口"""
+"""AxonFlow CLI 主入口"""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from axonflow import __version__
 from axonflow.cli.commands.agent import agent_app
 
 app = typer.Typer(
-    name="autoflow",
-    help="AutoFlow — 基于多智能体的自治工作流引擎",
+    name="axonflow",
+    help="AxonFlow — 基于多智能体的自治工作流引擎",
     no_args_is_help=True,
 )
 console = Console()
@@ -32,12 +32,12 @@ def start(
     daemon: bool = typer.Option(False, "--daemon", "-d", help="以守护进程模式运行"),
     config_dir: str = typer.Option("config", "--config", "-c", help="配置目录路径"),
 ) -> None:
-    """启动 AutoFlow 引擎"""
+    """启动 AxonFlow 引擎"""
     from axonflow.engine import AxonFlowEngine
 
     engine = AxonFlowEngine(config_dir=config_dir)
 
-    console.print(f"[bold green]AutoFlow v{__version__}[/bold green]")
+    console.print(f"[bold green]AxonFlow v{__version__}[/bold green]")
     console.print("Starting engine...")
 
     async def _run():
@@ -147,7 +147,7 @@ def status(
 @app.command()
 def version() -> None:
     """显示版本信息"""
-    console.print(f"AutoFlow v{__version__}")
+    console.print(f"AxonFlow v{__version__}")
 
 
 app.add_typer(agent_app, name="agent", help="智能体管理")
