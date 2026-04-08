@@ -48,6 +48,11 @@ dependencies = [
     # Web API
     "fastapi>=0.115,<1.0",
     "uvicorn[standard]>=0.30,<1.0",
+
+    # Tool dependencies
+    "beautifulsoup4>=4.12,<5.0",
+    "duckduckgo_search>=6.0,<8.0",
+    "jmespath>=1.0,<2.0",
 ]
 
 [project.optional-dependencies]
