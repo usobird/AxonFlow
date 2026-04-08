@@ -44,7 +44,20 @@ async def get_workflow(workflow_id: str):
     configs = load_all_workflow_configs(workflows_dir)
     for c in configs:
         if c.id == workflow_id:
-            return json.loads(c.model_dump_json())
+            result = json.loads(c.model_dump_json())
+            # Include raw YAML for editor
+            for f in workflows_dir.glob("*.yaml"):
+                try:
+                    data = yaml.safe_load(f.read_text(encoding="utf-8"))
+                    wf_id = data.get("id") if data else None
+                    if wf_id is None and isinstance(data.get("workflow"), dict):
+                        wf_id = data["workflow"].get("id")
+                    if wf_id == workflow_id:
+                        result["raw_yaml"] = f.read_text(encoding="utf-8")
+                        break
+                except Exception:
+                    continue
+            return result
     raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
 
 
