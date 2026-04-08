@@ -44,6 +44,10 @@ dependencies = [
 
     # 定时调度
     "croniter>=2.0,<4.0",
+
+    # Web API
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.30,<1.0",
 ]
 
 [project.optional-dependencies]
