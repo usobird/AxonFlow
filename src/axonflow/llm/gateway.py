@@ -188,11 +188,7 @@ class LLMGateway:
             msg = response.choices[0].message
             content = msg.content or ""
 
-            # 部分模型（如 Qwen3 thinking 模式）将内容放在 reasoning_content 中
-            if not content.strip() and hasattr(msg, "reasoning_content") and msg.reasoning_content:
-                content = msg.reasoning_content
-
-            # 解析 tool_calls
+            # 解析 tool_calls（先于 content 处理，因为 content 的回退策略依赖是否有 tool_calls）
             tool_calls = None
             if hasattr(msg, "tool_calls") and msg.tool_calls:
                 tool_calls = [
@@ -206,6 +202,17 @@ class LLMGateway:
                     }
                     for tc in msg.tool_calls
                 ]
+
+            # thinking 模型（如 Qwen3）在有 tool_calls 时 content 为空白，这是正常的。
+            # 只有在：(1) 无 tool_calls 且 (2) content 真正为空时，才回退到 reasoning_content。
+            # 这样避免把推理链污染进 assistant 的 content 消息。
+            if (
+                not tool_calls
+                and not content.strip()
+                and hasattr(msg, "reasoning_content")
+                and msg.reasoning_content
+            ):
+                content = msg.reasoning_content
 
             logger.info(
                 "llm.call_completed",

@@ -30,6 +30,109 @@ class TestLLMResponseToolCalls:
         assert resp.tool_calls[0]["function"]["name"] == "shell_exec"
 
 
+class TestGatewayThinkingModelCompat:
+    """thinking 模型兼容性：reasoning_content 不应污染 content 字段"""
+
+    @pytest.mark.asyncio
+    async def test_thinking_model_with_tool_calls_content_is_empty(self):
+        """thinking 模型返回 tool_calls 时，content 应为空字符串（不是 reasoning_content）"""
+        gateway = LLMGateway(
+            default_model=ModelConfig(provider="openai", name="test-model"),
+        )
+
+        mock_tool_call = MagicMock()
+        mock_tool_call.id = "call_think_001"
+        mock_tool_call.type = "function"
+        mock_tool_call.function.name = "file_write"
+        mock_tool_call.function.arguments = '{"path": "test.txt", "content": "hello"}'
+
+        mock_msg = MagicMock()
+        mock_msg.content = "\n\n"  # thinking 模型 tool_call 时 content 是空白
+        mock_msg.tool_calls = [mock_tool_call]
+        mock_msg.reasoning_content = "这是模型的推理过程，不应出现在 content 里"
+
+        mock_usage = MagicMock()
+        mock_usage.prompt_tokens = 10
+        mock_usage.completion_tokens = 5
+
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_response.usage = mock_usage
+
+        with patch("litellm.acompletion", new_callable=AsyncMock, return_value=mock_response):
+            result = await gateway.chat(messages=[{"role": "user", "content": "test"}])
+
+        # tool_calls 必须存在
+        assert result.tool_calls is not None
+        assert len(result.tool_calls) == 1
+        # content 不应包含 reasoning_content 的内容
+        assert "推理过程" not in result.content
+        # content 应为空（tool_call 时正常行为）
+        assert result.content.strip() == ""
+
+    @pytest.mark.asyncio
+    async def test_thinking_model_text_only_uses_content(self):
+        """thinking 模型无 tool_calls 时，content 非空则直接使用（不用 reasoning_content）"""
+        gateway = LLMGateway(
+            default_model=ModelConfig(provider="openai", name="test-model"),
+        )
+
+        mock_msg = MagicMock()
+        mock_msg.content = "任务完成，文件已写入。"
+        mock_msg.tool_calls = None
+        mock_msg.reasoning_content = "这是推理过程，不应覆盖 content"
+
+        mock_usage = MagicMock()
+        mock_usage.prompt_tokens = 10
+        mock_usage.completion_tokens = 5
+
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_response.usage = mock_usage
+
+        with patch("litellm.acompletion", new_callable=AsyncMock, return_value=mock_response):
+            result = await gateway.chat(messages=[{"role": "user", "content": "test"}])
+
+        assert result.tool_calls is None
+        assert result.content == "任务完成，文件已写入。"
+        assert "推理过程" not in result.content
+
+    @pytest.mark.asyncio
+    async def test_thinking_model_truly_empty_content_uses_reasoning(self):
+        """content 真正为空且无 tool_calls 时，才回退到 reasoning_content"""
+        gateway = LLMGateway(
+            default_model=ModelConfig(provider="openai", name="test-model"),
+        )
+
+        mock_msg = MagicMock()
+        mock_msg.content = ""  # 真正空，非 tool_call 场景
+        mock_msg.tool_calls = None
+        mock_msg.reasoning_content = "只有推理内容，没有正式回复"
+
+        mock_usage = MagicMock()
+        mock_usage.prompt_tokens = 10
+        mock_usage.completion_tokens = 5
+
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_response.usage = mock_usage
+
+        with patch("litellm.acompletion", new_callable=AsyncMock, return_value=mock_response):
+            result = await gateway.chat(messages=[{"role": "user", "content": "test"}])
+
+        assert result.tool_calls is None
+        assert "只有推理内容" in result.content
+
+
 class TestGatewayParsesToolCalls:
     @pytest.mark.asyncio
     async def test_chat_returns_tool_calls_when_present(self):
