@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import structlog
 
 logger = structlog.get_logger()
 
 _MAX_RESULT_LENGTH = 2000
+
+# Callback signature: (entry: ExecutionLogEntry, run_id: str | None) -> None
+LogCallback = Callable[["ExecutionLogEntry", str | None], Any]
 
 
 @dataclass
@@ -29,16 +34,43 @@ class ExecutionLogEntry:
 
 
 class ExecutionLogger:
-    """执行日志记录器 — 双写：内存 + JSONL 磁盘"""
+    """执行日志记录器 — 双写：内存 + JSONL 磁盘 + 可选回调"""
 
     def __init__(self, workspace_dir: str = "./workspace") -> None:
         self._entries: list[ExecutionLogEntry] = []
         self._workspace_dir = Path(workspace_dir)
+        self._callbacks: list[LogCallback] = []
+        # Mapping: workflow_id -> current run_id (set during workflow execution)
+        self._active_run_ids: dict[str, str] = {}
+
+    def add_callback(self, callback: LogCallback) -> None:
+        """注册日志回调（如 WebSocket 广播）"""
+        self._callbacks.append(callback)
+
+    def remove_callback(self, callback: LogCallback) -> None:
+        """移除日志回调"""
+        self._callbacks = [cb for cb in self._callbacks if cb is not callback]
+
+    def set_run_id(self, workflow_id: str, run_id: str) -> None:
+        """设置 workflow_id 对应的当前 run_id"""
+        self._active_run_ids[workflow_id] = run_id
+
+    def clear_run_id(self, workflow_id: str) -> None:
+        """清除 workflow_id 对应的 run_id"""
+        self._active_run_ids.pop(workflow_id, None)
 
     def log(self, entry: ExecutionLogEntry) -> None:
         """记录一条执行日志"""
         self._entries.append(entry)
         self._write_to_disk(entry)
+
+        # 触发回调
+        run_id = self._active_run_ids.get(entry.workflow_id)
+        for callback in self._callbacks:
+            try:
+                callback(entry, run_id)
+            except Exception as e:
+                logger.error("execution_log.callback_failed", error=str(e))
 
     def get_entries(
         self,

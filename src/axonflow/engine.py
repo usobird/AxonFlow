@@ -29,6 +29,16 @@ from axonflow.tools.file_ops import FileReadTool, FileWriteTool
 from axonflow.tools.git_ops import GitOpsTool
 from axonflow.tools.http_request import HttpRequestTool
 from axonflow.tools.shell_exec import ShellExecTool
+from axonflow.tools.web_search import WebSearchTool
+from axonflow.tools.web_scrape import WebScrapeTool
+from axonflow.tools.text_search import TextSearchTool
+from axonflow.tools.python_eval import PythonEvalTool
+from axonflow.tools.json_query import JsonQueryTool
+from axonflow.tools.directory_tree import DirectoryTreeTool
+from axonflow.tools.file_patch import FilePatchTool
+from axonflow.tools.env_vars import EnvVarsTool
+from axonflow.tools.archive_ops import ArchiveOpsTool
+from axonflow.tools.process_manager import ProcessManagerTool
 
 logger = structlog.get_logger()
 
@@ -161,11 +171,23 @@ class AxonFlowEngine:
     def _register_builtin_tools(self) -> None:
         """注册内置工具"""
         assert self._tool_registry is not None
+        # 原有工具
         self._tool_registry.register(ShellExecTool())
         self._tool_registry.register(FileReadTool())
         self._tool_registry.register(FileWriteTool())
         self._tool_registry.register(GitOpsTool())
         self._tool_registry.register(HttpRequestTool())
+        # 新增工具
+        self._tool_registry.register(WebSearchTool())
+        self._tool_registry.register(WebScrapeTool())
+        self._tool_registry.register(TextSearchTool())
+        self._tool_registry.register(PythonEvalTool())
+        self._tool_registry.register(JsonQueryTool())
+        self._tool_registry.register(DirectoryTreeTool())
+        self._tool_registry.register(FilePatchTool())
+        self._tool_registry.register(EnvVarsTool())
+        self._tool_registry.register(ArchiveOpsTool())
+        self._tool_registry.register(ProcessManagerTool())
 
     def _load_plugin_tools(self) -> None:
         """加载外部工具插件"""

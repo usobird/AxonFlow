@@ -53,3 +53,7 @@ htmlcov/
 
 # pytest
 .pytest_cache/
+.superpowers/
+
+# Node.js (frontend)
+node_modules/
