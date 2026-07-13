@@ -29,9 +29,9 @@ export default function Workflows() {
           { title: 'Name', dataIndex: 'name', key: 'name' },
           {
             title: 'Agents',
-            dataIndex: 'agents',
+            dataIndex: 'agent_count',
             key: 'agents',
-            render: (agents: string[]) => agents?.length || 0,
+            render: (count: number) => count || 0,
           },
           {
             title: 'Trigger',
@@ -45,7 +45,7 @@ export default function Workflows() {
               <Space>
                 <Button type="primary" size="small" icon={<PlayCircleOutlined />}
                   onClick={() => navigate(`/workflows/${r.id}`)}>
-                  Detail
+                  Open
                 </Button>
               </Space>
             ),

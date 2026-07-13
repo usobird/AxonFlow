@@ -1,18 +1,20 @@
 """Agent API — 列表、详情、编辑"""
 
 from __future__ import annotations
+
 import json
 from pathlib import Path
+
+import yaml
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
 from axonflow.api.deps import get_config_dir
 from axonflow.config.loader import (
     load_all_agent_configs,
-    load_agent_config,
-    load_agent_config_from_dir,
 )
 from axonflow.config.models import AgentConfig
-import yaml
+from axonflow.platform.models import AgentManifest
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -43,6 +45,15 @@ async def list_agents():
     agents_dir = config_dir / "agents"
     configs = load_all_agent_configs(agents_dir)
     return [_agent_to_dict(c) for c in configs]
+
+
+@router.get("/manifests")
+async def list_agent_manifests():
+    """Return the stable Agent Library representation for visual workflows."""
+    config_dir = get_config_dir()
+    configs = load_all_agent_configs(config_dir / "agents")
+    manifests = map(AgentManifest.from_agent_config, configs)
+    return [manifest.model_dump(mode="json") for manifest in manifests]
 
 
 @router.get("/{agent_id}")
@@ -78,7 +89,7 @@ async def update_agent(agent_id: str, body: YamlUpdateRequest):
             new_data = new_data["agent"]
         validated = AgentConfig(**new_data)
     except Exception as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     # Write
     target = agent_path / "config.yaml" if agent_path.is_dir() else agent_path
     target.write_text(body.yaml_content, encoding="utf-8")

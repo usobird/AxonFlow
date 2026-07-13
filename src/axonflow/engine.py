@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -15,30 +17,30 @@ from axonflow.config.loader import (
 )
 from axonflow.config.models import AxonFlowConfig
 from axonflow.core.agent import AgentRegistry, create_agent
-from axonflow.memory.local import InMemoryStore
-from axonflow.core.scheduler import Scheduler
 from axonflow.core.orchestrator_factory import create_orchestrator
+from axonflow.core.scheduler import Scheduler
 from axonflow.core.workflow import WorkflowResult
 from axonflow.llm.gateway import LLMGateway
+from axonflow.memory.local import InMemoryStore
 from axonflow.messaging.base import MessageBus
 from axonflow.messaging.memory_bus import InMemoryMessageBus
 from axonflow.observability.execution_log import ExecutionLogger
 from axonflow.observability.logger import setup_logging
+from axonflow.tools.archive_ops import ArchiveOpsTool
 from axonflow.tools.base import Tool, ToolRegistry
+from axonflow.tools.directory_tree import DirectoryTreeTool
+from axonflow.tools.env_vars import EnvVarsTool
 from axonflow.tools.file_ops import FileReadTool, FileWriteTool
+from axonflow.tools.file_patch import FilePatchTool
 from axonflow.tools.git_ops import GitOpsTool
 from axonflow.tools.http_request import HttpRequestTool
-from axonflow.tools.shell_exec import ShellExecTool
-from axonflow.tools.web_search import WebSearchTool
-from axonflow.tools.web_scrape import WebScrapeTool
-from axonflow.tools.text_search import TextSearchTool
-from axonflow.tools.python_eval import PythonEvalTool
 from axonflow.tools.json_query import JsonQueryTool
-from axonflow.tools.directory_tree import DirectoryTreeTool
-from axonflow.tools.file_patch import FilePatchTool
-from axonflow.tools.env_vars import EnvVarsTool
-from axonflow.tools.archive_ops import ArchiveOpsTool
 from axonflow.tools.process_manager import ProcessManagerTool
+from axonflow.tools.python_eval import PythonEvalTool
+from axonflow.tools.shell_exec import ShellExecTool
+from axonflow.tools.text_search import TextSearchTool
+from axonflow.tools.web_scrape import WebScrapeTool
+from axonflow.tools.web_search import WebSearchTool
 
 logger = structlog.get_logger()
 
@@ -147,8 +149,9 @@ class AxonFlowEngine:
     async def _create_message_bus(self) -> MessageBus:
         """创建消息总线（尝试 Redis，失败则降级到内存）"""
         try:
-            from axonflow.messaging.redis_bus import RedisMessageBus
             import redis.asyncio as aioredis
+
+            from axonflow.messaging.redis_bus import RedisMessageBus
 
             bus = RedisMessageBus(self.config.redis.url)
             await bus.start()
@@ -318,7 +321,12 @@ class AxonFlowEngine:
 
         logger.info("engine.stopped")
 
-    async def run_workflow(self, workflow_id: str, input_data: str) -> WorkflowResult:
+    async def run_workflow(
+        self,
+        workflow_id: str,
+        input_data: str,
+        event_callback: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> WorkflowResult:
         """执行指定工作流"""
         workflows_dir = self._config_dir / "workflows"
         workflow_configs = load_all_workflow_configs(workflows_dir)
@@ -340,6 +348,7 @@ class AxonFlowEngine:
             agent_registry=self._agent_registry,
             message_bus=self._message_bus,
             llm_gateway=self._llm_gateway,
+            event_callback=event_callback,
         )
 
         return await orchestrator.execute(input_data)

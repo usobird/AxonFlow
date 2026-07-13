@@ -1,22 +1,22 @@
 """FastAPI 应用入口"""
 
 from __future__ import annotations
+
 import asyncio
 from contextlib import asynccontextmanager
-from dataclasses import asdict
 from pathlib import Path
 
+import structlog
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from axonflow.api.deps import get_engine, set_config_dir, set_engine
+from axonflow.api.deps import set_config_dir, set_engine, set_platform_store
 from axonflow.api.routes import agents, config, logs, system, workflows
 from axonflow.api.ws import broadcaster
 from axonflow.engine import AxonFlowEngine
 from axonflow.observability.execution_log import ExecutionLogEntry
-
-import structlog
+from axonflow.platform.store import PlatformStore
 
 logger = structlog.get_logger()
 
@@ -57,6 +57,11 @@ async def lifespan(app: FastAPI):
     await engine.initialize()
     await engine.start()
     set_engine(engine)
+    workspace_dir = Path(engine.config.workspace_dir)
+    if not workspace_dir.is_absolute():
+        workspace_dir = config_dir.parent / workspace_dir
+    platform_store = PlatformStore(workspace_dir / "axonflow.db")
+    set_platform_store(platform_store)
 
     # Wire ExecutionLogger -> WebSocket broadcaster
     if engine._execution_logger is not None:
@@ -68,6 +73,7 @@ async def lifespan(app: FastAPI):
     yield
 
     await engine.stop()
+    platform_store.close()
     logger.info("api.stopped")
 
 

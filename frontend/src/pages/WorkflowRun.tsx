@@ -1,70 +1,76 @@
-import React from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Typography, Tag, Space } from 'antd';
+import { Space, Spin, Tag, Typography } from 'antd';
+import WorkflowRunCanvas from '../components/WorkflowRunCanvas';
+import type { PlatformEdge, PlatformNode } from '../components/WorkflowBuilder';
 import LiveEventLog from '../components/LiveEventLog';
+import { fetchApi } from '../api/client';
 import { useWebSocket } from '../api/ws';
+import type { WsEvent } from '../api/ws';
+
+interface WorkflowDefinition {
+  nodes: PlatformNode[];
+  edges: PlatformEdge[];
+}
+
+interface RunDetail {
+  status: string;
+  node_runs: Array<{ node_id: string; status: string }>;
+  events: WsEvent[];
+}
 
 export default function WorkflowRun() {
-  const { runId } = useParams<{ id: string; runId: string }>();
-  const { events, connected } = useWebSocket(runId || null);
+  const { id, runId } = useParams<{ id: string; runId: string }>();
+  const [workflow, setWorkflow] = useState<WorkflowDefinition | null>(null);
+  const [run, setRun] = useState<RunDetail | null>(null);
+  const { events: liveEvents, connected } = useWebSocket(runId || null);
 
-  const lastEvent = events[events.length - 1];
-  const isCompleted = lastEvent?.type === 'workflow.completed';
-  const isFailed = lastEvent?.type === 'workflow.failed';
+  useEffect(() => {
+    if (!id || !runId) return;
+    Promise.all([
+      fetchApi<WorkflowDefinition>(`/api/workflows/${id}`),
+      fetchApi<RunDetail>(`/api/workflows/${id}/runs/${runId}`),
+    ]).then(([definition, detail]) => {
+      setWorkflow(definition);
+      setRun(detail);
+    }).catch(console.error);
+  }, [id, runId]);
 
-  // Extract agent flow from events
-  const agents = new Set<string>();
-  events.forEach(e => {
-    if (e.data?.source) agents.add(e.data.source);
-    if (e.data?.targets) e.data.targets.forEach((t: string) => agents.add(t));
-  });
+  const events = useMemo(() => {
+    const existing = run?.events || [];
+    return [...existing, ...liveEvents];
+  }, [run, liveEvents]);
+  const nodeRuns = useMemo(() => {
+    const statuses = new Map((run?.node_runs || []).map((nodeRun) => [nodeRun.node_id, nodeRun.status]));
+    events.forEach((event) => {
+      const nodeId = event.data?.node_id;
+      if (!nodeId) return;
+      if (event.type === 'node.task_assigned') statuses.set(nodeId, 'queued');
+      if (event.type === 'node.task_started') statuses.set(nodeId, 'running');
+      if (event.type === 'node.result_ready') statuses.set(nodeId, 'completed');
+      if (event.type === 'node.error') statuses.set(nodeId, 'error');
+    });
+    return Array.from(statuses, ([node_id, status]) => ({ node_id, status }));
+  }, [events, run]);
+  const latestStatus = liveEvents.findLast?.((event) => event.type.startsWith('workflow.'))?.type === 'workflow.completed'
+    ? 'completed'
+    : liveEvents.findLast?.((event) => event.type === 'workflow.failed')
+      ? 'error'
+      : run?.status || 'running';
+
+  if (!workflow || !run) return <Spin size="large" style={{ display: 'block', margin: '100px auto' }} />;
 
   return (
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          Run: {runId}
-        </Typography.Title>
+        <Typography.Title level={3} style={{ margin: 0 }}>Run: {runId}</Typography.Title>
         <Space>
-          <Tag color={connected ? 'green' : 'red'}>
-            {connected ? 'Connected' : 'Disconnected'}
-          </Tag>
-          {isCompleted && <Tag color="green">Completed</Tag>}
-          {isFailed && <Tag color="red">Failed</Tag>}
-          {!isCompleted && !isFailed && <Tag color="blue">Running</Tag>}
+          <Tag color={connected ? 'green' : 'default'}>{connected ? 'Live' : 'Reconnecting'}</Tag>
+          <Tag color={latestStatus === 'completed' ? 'green' : latestStatus === 'error' ? 'red' : 'blue'}>{latestStatus}</Tag>
         </Space>
       </div>
-
-      {/* Simple DAG visualization */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 12,
-        padding: 24,
-        background: '#fff',
-        borderRadius: 8,
-        marginBottom: 16,
-      }}>
-        {Array.from(agents).map((agent, i) => (
-          <React.Fragment key={agent}>
-            {i > 0 && <span style={{ fontSize: 20, color: '#999' }}>→</span>}
-            <Tag
-              color={
-                events.some(e => e.type === 'workflow.completed' && e.data?.output?.status === 'success') ? 'green' :
-                events.some(e => e.data?.source === agent) ? 'green' :
-                'blue'
-              }
-              style={{ fontSize: 14, padding: '4px 16px' }}
-            >
-              {agent}
-            </Tag>
-          </React.Fragment>
-        ))}
-        {agents.size === 0 && <span style={{ color: '#999' }}>Waiting for agent activity...</span>}
-      </div>
-
-      <Typography.Title level={5}>Event Log</Typography.Title>
+      <WorkflowRunCanvas nodes={workflow.nodes} edges={workflow.edges} nodeRuns={nodeRuns} />
+      <Typography.Title level={5} style={{ marginTop: 20 }}>Event Log</Typography.Title>
       <LiveEventLog events={events} />
     </>
   );

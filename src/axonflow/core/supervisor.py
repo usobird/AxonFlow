@@ -10,8 +10,8 @@ import structlog
 from axonflow.config.models import WorkflowConfig
 from axonflow.core.agent import AgentRegistry
 from axonflow.core.context import WorkflowContext
-from axonflow.core.message import Message, MessageType
-from axonflow.core.workflow import BaseOrchestrator, WorkflowResult
+from axonflow.core.message import MessageType
+from axonflow.core.workflow import BaseOrchestrator, OrchestratorEventCallback, WorkflowResult
 from axonflow.llm.gateway import LLMGateway
 from axonflow.messaging.base import MessageBus
 
@@ -36,8 +36,9 @@ class SupervisorOrchestrator(BaseOrchestrator):
         agent_registry: AgentRegistry,
         message_bus: MessageBus,
         llm_gateway: LLMGateway | None = None,
+        event_callback: OrchestratorEventCallback | None = None,
     ) -> None:
-        super().__init__(config, agent_registry, message_bus)
+        super().__init__(config, agent_registry, message_bus, event_callback=event_callback)
         self.llm_gateway = llm_gateway
 
         if config.flow.supervisor is None:
@@ -53,6 +54,7 @@ class SupervisorOrchestrator(BaseOrchestrator):
         start_time = time.monotonic()
         ctx = self._create_context(initial_input)
         workflow_id = ctx.workflow_id
+        await self._emit("workflow.context_ready", {"execution_id": workflow_id})
         self._inject_context(ctx)
 
         logger.info(
@@ -124,6 +126,18 @@ class SupervisorOrchestrator(BaseOrchestrator):
                     agent=event.sender,
                     status=event.payload.get("status"),
                     iteration=iteration,
+                )
+                event_type = (
+                    "node.result_ready" if event.type == MessageType.TASK_RESPONSE else "node.error"
+                )
+                await self._emit(
+                    event_type,
+                    {
+                        "agent_id": event.sender,
+                        "step_id": event.step_id,
+                        "payload": event.payload,
+                        "error": event.payload.get("error"),
+                    },
                 )
 
                 # 检查终止条件
