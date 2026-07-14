@@ -6,6 +6,7 @@ import {
   ApartmentOutlined,
   RobotOutlined,
   FileTextOutlined,
+  LineChartOutlined,
   SettingOutlined,
 } from '@ant-design/icons';
 
@@ -16,6 +17,7 @@ const menuItems = [
   { key: '/workflows', icon: <ApartmentOutlined />, label: 'Workflows' },
   { key: '/agents', icon: <RobotOutlined />, label: 'Agents' },
   { key: '/logs', icon: <FileTextOutlined />, label: 'Logs' },
+  { key: '/observability', icon: <LineChartOutlined />, label: 'LLM Traces' },
   { key: '/settings', icon: <SettingOutlined />, label: 'Settings' },
 ];
 

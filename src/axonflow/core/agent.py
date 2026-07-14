@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -16,7 +16,7 @@ from axonflow.config.loader import load_skill_content
 from axonflow.config.models import AgentConfig
 from axonflow.core.context import WorkflowContext
 from axonflow.core.message import Message, MessageType
-from axonflow.llm.gateway import LLMGateway
+from axonflow.llm.gateway import LLMGateway, LLMTraceContext
 from axonflow.llm.prompt_builder import PromptBuilder
 from axonflow.memory.base import MemoryRecord, MemoryScope, MemoryStore
 from axonflow.memory.local import InMemoryStore
@@ -183,6 +183,15 @@ class BaseAgent:
                 messages=messages,
                 model_config=self.config.model,
                 tools=tool_schemas if tool_schemas else None,
+                prefer_default=False,
+                trace_context=LLMTraceContext(
+                    workflow_id=message.workflow_id,
+                    execution_id=message.workflow_id,
+                    agent_id=self.id,
+                    run_id=self.execution_logger.get_run_id(message.workflow_id)
+                    if self.execution_logger
+                    else None,
+                ),
             )
 
             # Case 1: LLM 返回了 tool_calls
@@ -314,7 +323,7 @@ class BaseAgent:
         if self.execution_logger is None:
             return
         entry = ExecutionLogEntry(
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             workflow_id=workflow_id,
             agent_id=self.id,
             action=action,

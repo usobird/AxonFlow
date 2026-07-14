@@ -10,6 +10,7 @@ import Agents from './pages/Agents';
 import AgentDetail from './pages/AgentDetail';
 import Logs from './pages/Logs';
 import Settings from './pages/Settings';
+import Observability from './pages/Observability';
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
             <Route path="/agents" element={<Agents />} />
             <Route path="/agents/:id" element={<AgentDetail />} />
             <Route path="/logs" element={<Logs />} />
+            <Route path="/observability" element={<Observability />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
         </Routes>

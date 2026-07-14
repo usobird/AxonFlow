@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from axonflow.config.models import FlowConfig, Route, RouteCondition, WorkflowConfig
+from axonflow.config.models import FlowConfig, ModelConfig, Route, RouteCondition, WorkflowConfig
+from axonflow.llm.gateway import LLMGateway
+from axonflow.llm.providers import resolve_model_name
 from axonflow.platform.models import PlatformWorkflow, WorkflowNode
 from axonflow.platform.store import PlatformStore
 
@@ -81,3 +83,92 @@ def test_store_persists_workflow_runs_nodes_and_events(tmp_path) -> None:
     assert detail["node_runs"][0]["output"]["content"] == "Done"
     assert detail["events"][0]["type"] == "node.result_ready"
     store.close()
+
+
+def test_store_encrypts_credentials_and_persists_llm_spans(tmp_path) -> None:
+    store = PlatformStore(tmp_path / "axonflow.db")
+    credential = store.create_credential(
+        name="qwen-production",
+        provider="dashscope",
+        source="encrypted",
+        secret="sk-secret-value",
+    )
+
+    assert credential["masked_value"] == "sk-s****alue"
+    assert "secret" not in credential
+    assert store.resolve_credential(credential["id"])["secret"] == "sk-secret-value"
+
+    store.create_llm_span(
+        {
+            "id": "span-1",
+            "run_id": "run-1",
+            "workflow_id": "workflow-1",
+            "execution_id": "execution-1",
+            "agent_id": "agent-writer",
+            "provider": "dashscope",
+            "model": "dashscope/qwen-plus",
+            "credential_id": credential["id"],
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "input_preview": "1 messages, 12 characters",
+        }
+    )
+    store.complete_llm_span(
+        "span-1",
+        {
+            "status": "completed",
+            "completed_at": "2026-01-01T00:00:01+00:00",
+            "latency_ms": 1000,
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "total_tokens": 30,
+            "output_preview": "1 messages, 4 characters",
+        },
+    )
+
+    span = store.list_llm_spans(run_id="run-1")[0]
+    assert span["status"] == "completed"
+    assert span["total_tokens"] == 30
+    store.close()
+
+
+def test_store_persists_reusable_model_profiles(tmp_path) -> None:
+    store = PlatformStore(tmp_path / "axonflow.db")
+    credential = store.create_credential(
+        name="minimax-production",
+        provider="minimax",
+        source="environment",
+        env_var="MINIMAX_API_KEY",
+    )
+    profile = store.create_model_profile(
+        "minimax-m3",
+        {
+            "provider": "minimax",
+            "name": "MiniMax-M3",
+            "credential_id": credential["id"],
+            "api_base": "https://api.minimaxi.com/v1",
+            "temperature": 0.2,
+            "max_tokens": 2048,
+            "timeout": 60,
+        },
+    )
+
+    stored = store.get_model_profile(profile["id"])
+    assert stored is not None
+    assert stored["name"] == "minimax-m3"
+    assert stored["config"]["credential_id"] == credential["id"]
+    assert store.list_model_profiles()[0]["id"] == profile["id"]
+    store.close()
+
+
+def test_agent_model_override_wins_over_global_default() -> None:
+    gateway = LLMGateway(default_model=ModelConfig(provider="openai", name="gpt-4o"))
+    selected = gateway._select_model_config(
+        ModelConfig(provider="dashscope", name="qwen-plus"),
+        prefer_default=True,
+    )
+
+    assert selected.provider == "dashscope"
+    assert resolve_model_name("dashscope", "qwen-plus") == "dashscope/qwen-plus"
+    assert resolve_model_name("openai_compatible", "custom-model", "https://example.test/v1") == (
+        "openai/custom-model"
+    )

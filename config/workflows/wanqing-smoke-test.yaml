@@ -1,0 +1,17 @@
+workflow:
+  id: wanqing-smoke-test
+  name: "Wanqing 模型验证"
+  trigger:
+    type: manual
+  agents:
+    - agent-wanqing-smoke-test
+  flow:
+    entry: agent-wanqing-smoke-test
+    max_iterations: 1
+    timeout: 120
+    routes: {}
+    terminate_on:
+      - agent: agent-wanqing-smoke-test
+        status: success
+  context:
+    purpose: "Validate the configured Wanqing OpenAI-compatible endpoint"

@@ -165,6 +165,9 @@ async def run_workflow(workflow_id: str, body: RunRequest) -> dict[str, str]:
     store.create_run(run_id, workflow, body.input)
 
     async def _execute() -> None:
+        trace_result: dict[str, Any] | None = None
+        trace_error: str | None = None
+
         async def _on_orchestrator_event(event_type: str, data: dict[str, Any]) -> None:
             if event_type == "workflow.context_ready":
                 execution_id = str(data["execution_id"])
@@ -199,20 +202,28 @@ async def run_workflow(workflow_id: str, body: RunRequest) -> dict[str, str]:
             await _publish_event(run_id, workflow_id, event_type, event_data)
 
         try:
+            await engine.start_workflow_trace(run_id, workflow_id, body.input)
             await _publish_event(run_id, workflow_id, "workflow.started", {"input": body.input})
             result = await engine.run_workflow(
                 workflow_id, body.input, event_callback=_on_orchestrator_event
             )
             result_data = result.to_dict()
+            trace_result = result_data
             store.complete_run(run_id, result.status, result_data)
             event_type = "workflow.completed" if result.status == "completed" else "workflow.failed"
             await _publish_event(run_id, workflow_id, event_type, result_data)
         except Exception as exc:
             logger.exception("api.workflow_run_failed", workflow_id=workflow_id)
             error = {"error": str(exc)}
+            trace_error = str(exc)
             store.complete_run(run_id, "error", error)
             await _publish_event(run_id, workflow_id, "workflow.failed", error)
         finally:
+            await engine.finish_workflow_trace(
+                run_id,
+                result=trace_result,
+                error=trace_error,
+            )
             if engine._execution_logger is not None:
                 for execution_id in execution_ids:
                     engine._execution_logger.clear_run_id(execution_id)

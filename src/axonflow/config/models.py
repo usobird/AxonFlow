@@ -6,7 +6,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # ============================================================
 # LLM 模型配置
 # ============================================================
@@ -19,8 +18,10 @@ class ModelConfig(BaseModel):
     name: str = "gpt-4o"
     temperature: float = 0.7
     max_tokens: int = 4096
+    timeout: float = 60.0
     api_base: str | None = None
     api_key_env: str | None = None  # 环境变量名，如 OPENAI_API_KEY
+    credential_id: str | None = None  # 平台加密凭据 ID，优先于 api_key_env
     fallback_models: list[str] = Field(default_factory=list)
 
 

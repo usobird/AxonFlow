@@ -12,8 +12,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from axonflow.api.deps import set_config_dir, set_engine, set_platform_store
-from axonflow.api.routes import agents, config, logs, system, workflows
+from axonflow.api.routes import (
+    agents,
+    config,
+    credentials,
+    logs,
+    model_profiles,
+    observability,
+    system,
+    workflows,
+)
 from axonflow.api.ws import broadcaster
+from axonflow.config.loader import load_global_config
 from axonflow.engine import AxonFlowEngine
 from axonflow.observability.execution_log import ExecutionLogEntry
 from axonflow.platform.store import PlatformStore
@@ -53,15 +63,21 @@ async def lifespan(app: FastAPI):
     config_dir = Path(app.state.config_dir) if hasattr(app.state, "config_dir") else Path("config")
     set_config_dir(config_dir)
 
-    engine = AxonFlowEngine(config_dir=str(config_dir))
-    await engine.initialize()
-    await engine.start()
-    set_engine(engine)
-    workspace_dir = Path(engine.config.workspace_dir)
+    config = load_global_config(config_dir / "axonflow.yaml")
+    workspace_dir = Path(config.workspace_dir)
     if not workspace_dir.is_absolute():
         workspace_dir = config_dir.parent / workspace_dir
     platform_store = PlatformStore(workspace_dir / "axonflow.db")
     set_platform_store(platform_store)
+
+    engine = AxonFlowEngine(
+        config_dir=str(config_dir),
+        config=config,
+        platform_store=platform_store,
+    )
+    await engine.initialize()
+    await engine.start()
+    set_engine(engine)
 
     # Wire ExecutionLogger -> WebSocket broadcaster
     if engine._execution_logger is not None:
@@ -102,6 +118,9 @@ def create_app(config_dir: str = "config") -> FastAPI:
     app.include_router(agents.router)
     app.include_router(logs.router)
     app.include_router(config.router)
+    app.include_router(credentials.router)
+    app.include_router(model_profiles.router)
+    app.include_router(observability.router)
 
     # WebSocket 端点
     @app.websocket("/ws/events")

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Typography, Tabs, Button, message, Spin, Descriptions, Tag } from 'antd';
+import { Typography, Tabs, Button, message, Spin, Descriptions, Tag, Form, Input, InputNumber, Select } from 'antd';
 import { SaveOutlined } from '@ant-design/icons';
 import YamlEditor from '../components/YamlEditor';
 import { fetchApi } from '../api/client';
@@ -12,6 +12,9 @@ export default function AgentDetail() {
   const [yaml, setYaml] = useState('');
   const [persona, setPersona] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [credentials, setCredentials] = useState<Array<{ id: string; name: string; masked_value?: string }>>([]);
+  const [providers, setProviders] = useState<Array<{ id: string; label: string }>>([]);
+  const [modelForm] = Form.useForm();
 
   useEffect(() => {
     if (!id) return;
@@ -28,6 +31,16 @@ export default function AgentDetail() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [id]);
+
+  useEffect(() => {
+    Promise.all([
+      fetchApi<Array<{ id: string; name: string; masked_value?: string }>>('/api/credentials'),
+      fetchApi<Array<{ id: string; label: string }>>('/api/credentials/catalog/providers'),
+    ]).then(([credentialData, providerData]) => {
+      setCredentials(credentialData);
+      setProviders(providerData);
+    }).catch(console.error);
+  }, []);
 
   const handleSaveConfig = async () => {
     try {
@@ -48,6 +61,20 @@ export default function AgentDetail() {
         body: JSON.stringify({ content: persona[fileName] }),
       });
       message.success(`${fileName} saved`);
+    } catch (e: any) {
+      message.error(e.message);
+    }
+  };
+
+  const handleSaveModel = async () => {
+    try {
+      const model = await modelForm.validateFields();
+      await fetchApi(`/api/agents/${id}/model`, {
+        method: 'PUT',
+        body: JSON.stringify({ model }),
+      });
+      setAgent((current: any) => ({ ...current, model }));
+      message.success('Model settings applied to future runs');
     } catch (e: any) {
       message.error(e.message);
     }
@@ -81,6 +108,29 @@ export default function AgentDetail() {
                 Save Config
               </Button>
             </>
+          ),
+        },
+        {
+          key: 'model',
+          label: 'Model',
+          children: (
+            <Form form={modelForm} initialValues={agent?.model} layout="vertical" style={{ maxWidth: 680 }}>
+              <Form.Item name="provider" label="Provider" rules={[{ required: true }]}>
+                <Select options={providers.map((provider) => ({ value: provider.id, label: provider.label }))} />
+              </Form.Item>
+              <Form.Item name="name" label="Model" rules={[{ required: true }]}><Input placeholder="qwen-plus / MiniMax-M2.5 / gpt-4o" /></Form.Item>
+              <Form.Item name="credential_id" label="Credential">
+                <Select allowClear placeholder="Use environment variable below" options={credentials.map((credential) => ({
+                  value: credential.id,
+                  label: `${credential.name} (${credential.masked_value || 'hidden'})`,
+                }))} />
+              </Form.Item>
+              <Form.Item name="api_key_env" label="Environment variable fallback"><Input placeholder="DASHSCOPE_API_KEY" /></Form.Item>
+              <Form.Item name="api_base" label="Custom API base"><Input placeholder="Optional OpenAI-compatible endpoint" /></Form.Item>
+              <Form.Item name="temperature" label="Temperature"><InputNumber min={0} max={2} step={0.1} style={{ width: 160 }} /></Form.Item>
+              <Form.Item name="max_tokens" label="Max tokens"><InputNumber min={1} max={100000} style={{ width: 160 }} /></Form.Item>
+              <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveModel}>Apply Model Settings</Button>
+            </Form>
           ),
         },
         ...['soul.md', 'user.md', 'workflow.md'].map(f => ({

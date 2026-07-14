@@ -9,5 +9,6 @@ export async function fetchApi<T = any>(path: string, options?: RequestInit): Pr
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || res.statusText);
   }
+  if (res.status === 204) return undefined as T;
   return res.json();
 }

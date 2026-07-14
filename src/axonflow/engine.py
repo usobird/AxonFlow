@@ -15,7 +15,7 @@ from axonflow.config.loader import (
     load_all_workflow_configs,
     load_global_config,
 )
-from axonflow.config.models import AxonFlowConfig
+from axonflow.config.models import AgentConfig, AxonFlowConfig
 from axonflow.core.agent import AgentRegistry, create_agent
 from axonflow.core.orchestrator_factory import create_orchestrator
 from axonflow.core.scheduler import Scheduler
@@ -26,6 +26,7 @@ from axonflow.messaging.base import MessageBus
 from axonflow.messaging.memory_bus import InMemoryMessageBus
 from axonflow.observability.execution_log import ExecutionLogger
 from axonflow.observability.logger import setup_logging
+from axonflow.platform.store import PlatformStore
 from axonflow.tools.archive_ops import ArchiveOpsTool
 from axonflow.tools.base import Tool, ToolRegistry
 from axonflow.tools.directory_tree import DirectoryTreeTool
@@ -60,9 +61,11 @@ class AxonFlowEngine:
         self,
         config_dir: str = "config",
         config: AxonFlowConfig | None = None,
+        platform_store: PlatformStore | None = None,
     ) -> None:
         self._config_dir = Path(config_dir)
         self._config = config
+        self._platform_store = platform_store
         self._message_bus: MessageBus | None = None
         self._llm_gateway: LLMGateway | None = None
         self._tool_registry: ToolRegistry | None = None
@@ -117,6 +120,10 @@ class AxonFlowEngine:
         self._llm_gateway = LLMGateway(
             default_model=self.config.default_model,
             token_budget=self.config.token_budget,
+            credential_resolver=(
+                self._platform_store.resolve_credential if self._platform_store else None
+            ),
+            span_store=self._platform_store,
         )
 
         # 5. 注册内置工具
@@ -145,6 +152,19 @@ class AxonFlowEngine:
 
         self._initialized = True
         logger.info("engine.initialized")
+
+    async def start_workflow_trace(self, run_id: str, workflow_id: str, input_data: str) -> None:
+        if self._llm_gateway is not None:
+            await self._llm_gateway.start_workflow_trace(run_id, workflow_id, input_data)
+
+    async def finish_workflow_trace(
+        self,
+        run_id: str,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> None:
+        if self._llm_gateway is not None:
+            await self._llm_gateway.finish_workflow_trace(run_id, result=result, error=error)
 
     async def _create_message_bus(self) -> MessageBus:
         """创建消息总线（尝试 Redis，失败则降级到内存）"""
@@ -237,25 +257,34 @@ class AxonFlowEngine:
         assert self._tool_registry is not None
 
         agents_dir = self._config_dir / "agents"
-        skills_dir = self._config_dir / "skills"
         agent_configs = load_all_agent_configs(agents_dir)
 
         for cfg in agent_configs:
-            agent = create_agent(
-                config=cfg,
-                message_bus=self._message_bus,
-                llm_gateway=self._llm_gateway,
-                tool_registry=self._tool_registry,
-                memory_store=self._memory_store,
-                execution_logger=self._execution_logger,
-                skills_dir=skills_dir,
-            )
-            self._agent_registry.register(agent)
+            await self.add_agent(cfg, start_immediately=False)
 
         logger.info(
             "engine.agents_loaded",
             count=len(agent_configs),
         )
+
+    async def add_agent(self, config: AgentConfig, start_immediately: bool = True) -> None:
+        """Register an Agent created from the UI without requiring an engine restart."""
+        assert self._agent_registry is not None
+        assert self._message_bus is not None
+        assert self._llm_gateway is not None
+        assert self._tool_registry is not None
+        agent = create_agent(
+            config=config,
+            message_bus=self._message_bus,
+            llm_gateway=self._llm_gateway,
+            tool_registry=self._tool_registry,
+            memory_store=self._memory_store,
+            execution_logger=self._execution_logger,
+            skills_dir=self._config_dir / "skills",
+        )
+        self._agent_registry.register(agent)
+        if start_immediately and self._running:
+            self._agent_tasks.append(asyncio.create_task(agent.start()))
 
     def _load_cron_jobs(self) -> None:
         """从工作流配置中加载 Cron 任务"""
