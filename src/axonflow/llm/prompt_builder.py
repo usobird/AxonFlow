@@ -42,13 +42,30 @@ class PromptBuilder:
         if agent_config.role:
             system_parts.append(agent_config.role)
 
+        # 1b.1 工作流内职责覆盖：仅对当前工作流生效，不修改 Agent 默认角色。
+        if context:
+            overrides = context.shared_state.get("agent_role_overrides", {})
+            responsibility = overrides.get(agent_config.id) if isinstance(overrides, dict) else None
+            if isinstance(responsibility, str) and responsibility.strip():
+                system_parts.append(
+                    "## 当前工作流职责\n"
+                    f"{responsibility.strip()}\n"
+                    "在本次工作流中优先遵循此职责。"
+                )
+
         # 1c. Skill 内容注入（在 role 之后，tool schemas 之前）
         if skill_content:
             system_parts.append(f"\n## Skills\n{skill_content}")
 
         if context and context.shared_state:
-            state_str = "\n".join(f"- {k}: {v}" for k, v in context.shared_state.items())
-            system_parts.append(f"\n当前工作流上下文:\n{state_str}")
+            visible_state = {
+                key: value
+                for key, value in context.shared_state.items()
+                if key != "agent_role_overrides"
+            }
+            state_str = "\n".join(f"- {key}: {value}" for key, value in visible_state.items())
+            if state_str:
+                system_parts.append(f"\n当前工作流上下文:\n{state_str}")
 
         if tool_schemas:
             tool_names = [t["function"]["name"] for t in tool_schemas]

@@ -5,6 +5,7 @@ import MainLayout from './layouts/MainLayout';
 import Dashboard from './pages/Dashboard';
 import Workflows from './pages/Workflows';
 import WorkflowDetail from './pages/WorkflowDetail';
+import WorkflowCreate from './pages/WorkflowCreate';
 import WorkflowRun from './pages/WorkflowRun';
 import Agents from './pages/Agents';
 import AgentDetail from './pages/AgentDetail';
@@ -20,6 +21,7 @@ export default function App() {
           <Route element={<MainLayout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/workflows" element={<Workflows />} />
+            <Route path="/workflows/new" element={<WorkflowCreate />} />
             <Route path="/workflows/:id" element={<WorkflowDetail />} />
             <Route path="/workflows/:id/runs/:runId" element={<WorkflowRun />} />
             <Route path="/agents" element={<Agents />} />

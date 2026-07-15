@@ -50,6 +50,64 @@ def test_visual_graph_rejects_duplicate_agents() -> None:
         )
 
 
+def test_workflow_node_responsibility_projects_to_runtime_context() -> None:
+    workflow = PlatformWorkflow(
+        id="content-flow",
+        name="Content flow",
+        nodes=[
+            WorkflowNode(
+                id="node-writer",
+                agent_id="writer",
+                label="Writer",
+                is_entry=True,
+                config={"responsibility": "Draft a concise first version for the reviewer."},
+            )
+        ],
+    )
+
+    runtime = workflow.to_workflow_config()
+    restored = PlatformWorkflow.from_workflow_config(runtime)
+
+    assert runtime.context["agent_role_overrides"]["writer"] == (
+        "Draft a concise first version for the reviewer."
+    )
+    assert restored.nodes[0].config["responsibility"] == (
+        "Draft a concise first version for the reviewer."
+    )
+
+
+def test_workflow_end_node_projects_to_runtime_termination() -> None:
+    workflow = PlatformWorkflow(
+        id="review-flow",
+        name="Review flow",
+        nodes=[
+            WorkflowNode(
+                id="node-writer",
+                agent_id="writer",
+                label="Writer",
+                is_entry=True,
+                config={"terminate_on_success": False},
+            ),
+            WorkflowNode(
+                id="node-reviewer",
+                agent_id="reviewer",
+                label="Reviewer",
+                config={"terminate_on_success": True},
+            ),
+        ],
+        terminate_on=[{"agent": "writer", "status": "error"}],
+    )
+
+    runtime = workflow.to_workflow_config()
+    restored = PlatformWorkflow.from_workflow_config(runtime)
+
+    assert {tuple(condition.items()) for condition in runtime.flow.terminate_on} == {
+        (("agent", "writer"), ("status", "error")),
+        (("agent", "reviewer"), ("status", "success")),
+    }
+    assert restored.nodes[1].config["terminate_on_success"] is True
+
+
 def test_store_persists_workflow_runs_nodes_and_events(tmp_path) -> None:
     store = PlatformStore(tmp_path / "axonflow.db")
     workflow = PlatformWorkflow(

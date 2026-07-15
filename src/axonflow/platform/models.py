@@ -125,6 +125,14 @@ class PlatformWorkflow(BaseModel):
 
     @classmethod
     def from_workflow_config(cls, config: WorkflowConfig) -> PlatformWorkflow:
+        role_overrides = config.context.get("agent_role_overrides", {})
+        if not isinstance(role_overrides, dict):
+            role_overrides = {}
+        success_terminations = {
+            str(condition.get("agent"))
+            for condition in config.flow.terminate_on
+            if condition.get("status") == "success" and condition.get("agent")
+        }
         nodes = [
             WorkflowNode(
                 id=f"node-{agent_id}",
@@ -132,6 +140,19 @@ class PlatformWorkflow(BaseModel):
                 label=agent_id,
                 position=CanvasPosition(x=80 + index * 260, y=220),
                 is_entry=agent_id == config.flow.entry,
+                config={
+                    **(
+                        {"responsibility": responsibility}
+                        if isinstance(responsibility := role_overrides.get(agent_id), str)
+                        and responsibility.strip()
+                        else {}
+                    ),
+                    **(
+                        {"terminate_on_success": True}
+                        if agent_id in success_terminations
+                        else {}
+                    ),
+                },
             )
             for index, agent_id in enumerate(config.agents)
         ]
@@ -175,6 +196,37 @@ class PlatformWorkflow(BaseModel):
             routes.setdefault(source_agent, []).append(
                 Route(target=target_agent, condition=edge.condition)
             )
+        context = dict(self.context)
+        role_overrides = {
+            node.agent_id: responsibility.strip()
+            for node in self.nodes
+            if isinstance(responsibility := node.config.get("responsibility"), str)
+            and responsibility.strip()
+        }
+        if role_overrides:
+            context["agent_role_overrides"] = role_overrides
+        else:
+            context.pop("agent_role_overrides", None)
+        has_termination_settings = any(
+            "terminate_on_success" in node.config for node in self.nodes
+        )
+        if has_termination_settings:
+            configured_agents = {node.agent_id for node in self.nodes}
+            terminate_on = [
+                condition
+                for condition in self.terminate_on
+                if not (
+                    condition.get("status") == "success"
+                    and condition.get("agent") in configured_agents
+                )
+            ]
+            terminate_on.extend(
+                {"agent": node.agent_id, "status": "success"}
+                for node in self.nodes
+                if node.config.get("terminate_on_success") is True
+            )
+        else:
+            terminate_on = self.terminate_on
         return WorkflowConfig(
             id=self.id,
             name=self.name,
@@ -186,10 +238,10 @@ class PlatformWorkflow(BaseModel):
                 max_iterations=self.max_iterations,
                 timeout=self.timeout,
                 routes=routes,
-                terminate_on=self.terminate_on,
+                terminate_on=terminate_on,
                 supervisor=self.supervisor,
             ),
-            context=self.context,
+            context=context,
         )
 
     def node_id_for_agent(self, agent_id: str) -> str | None:

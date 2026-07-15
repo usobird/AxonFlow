@@ -213,14 +213,23 @@ class SupervisorOrchestrator(BaseOrchestrator):
 
         # 收集可用 Agent 信息（排除 supervisor 自身）
         available_agents = []
+        role_overrides = self.config.context.get("agent_role_overrides", {})
+        if not isinstance(role_overrides, dict):
+            role_overrides = {}
         for agent_id in self.config.agents:
             agent = self.agents.get(agent_id)
             if agent and agent.id != self.supervisor_config.agent_id:
+                responsibility = role_overrides.get(agent.id)
+                role = (
+                    responsibility.strip()
+                    if isinstance(responsibility, str) and responsibility.strip()
+                    else agent.config.role
+                )
                 available_agents.append(
                     {
                         "id": agent.id,
                         "name": agent.name,
-                        "role": agent.config.role[:200],
+                        "role": role[:200],
                         "tools": agent.config.tools,
                     }
                 )

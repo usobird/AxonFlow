@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { Checkbox, Empty, Input, Select, Typography } from 'antd';
+import { Button, Checkbox, Empty, Input, Select, Typography } from 'antd';
 import ReactFlow, {
   addEdge,
   applyEdgeChanges,
@@ -43,6 +43,8 @@ interface AgentNodeData {
   label: string;
   agentId: string;
   isEntry: boolean;
+  responsibility: string;
+  terminateOnSuccess: boolean;
 }
 
 function AgentNode({ data }: NodeProps<AgentNodeData>) {
@@ -55,7 +57,13 @@ function AgentNode({ data }: NodeProps<AgentNodeData>) {
       <div style={{ padding: '7px 10px', color: '#595959', fontSize: 12 }}>
         {data.agentId}
         {data.isEntry && <span style={{ marginLeft: 8, color: '#389e0d' }}>Entry</span>}
+        {data.terminateOnSuccess && <span style={{ marginLeft: 8, color: '#d46b08' }}>End</span>}
       </div>
+      {data.responsibility && (
+        <div style={{ padding: '0 10px 8px', color: '#595959', fontSize: 12, lineHeight: 1.45 }}>
+          {data.responsibility.length > 84 ? `${data.responsibility.slice(0, 84)}...` : data.responsibility}
+        </div>
+      )}
       <Handle type="source" position={Position.Right} />
     </div>
   );
@@ -74,6 +82,8 @@ function toFlowNodes(nodes: PlatformNode[], agents: AgentManifest[] = []): Node<
         : node.label,
       agentId: node.agent_id,
       isEntry: node.is_entry,
+      responsibility: typeof node.config?.responsibility === 'string' ? node.config.responsibility : '',
+      terminateOnSuccess: node.config?.terminate_on_success === true,
     },
   }));
 }
@@ -96,7 +106,10 @@ function toPlatformNodes(nodes: Node<AgentNodeData>[]): PlatformNode[] {
     label: node.data.label,
     position: node.position,
     is_entry: node.data.isEntry,
-    config: {},
+    config: {
+      ...(node.data.responsibility.trim() ? { responsibility: node.data.responsibility.trim() } : {}),
+      terminate_on_success: node.data.terminateOnSuccess,
+    },
   }));
 }
 
@@ -162,7 +175,16 @@ const WorkflowBuilder = forwardRef<WorkflowBuilderHandle, Props>(function Workfl
       const next = addEdge({ ...connection, markerEnd: { type: MarkerType.ArrowClosed } }, current);
       return next;
     });
-  }, []);
+    setNodes((current) => current.map((node) => {
+      if (node.id === connection.source) {
+        return { ...node, data: { ...node.data, terminateOnSuccess: false } };
+      }
+      if (node.id === connection.target && !edges.some((edge) => edge.source === node.id)) {
+        return { ...node, data: { ...node.data, terminateOnSuccess: true } };
+      }
+      return node;
+    }));
+  }, [edges]);
 
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedNodeId) || null,
@@ -217,14 +239,45 @@ const WorkflowBuilder = forwardRef<WorkflowBuilderHandle, Props>(function Workfl
       id,
       type: 'agent',
       position: { x: event.clientX - bounds.left - 85, y: event.clientY - bounds.top - 35 },
-      data: { label: agent.name, agentId: agent.id, isEntry: nodes.length === 0 },
+      data: {
+        label: agent.name,
+        agentId: agent.id,
+        isEntry: nodes.length === 0,
+        responsibility: '',
+        terminateOnSuccess: true,
+      },
     };
     const next = [...nodes, nextNode];
     setNodes(next);
   };
 
+  const deleteSelectedNode = () => {
+    if (!selectedNode) return;
+    setNodes((current) => {
+      const remaining = current.filter((node) => node.id !== selectedNode.id);
+      if (selectedNode.data.isEntry && remaining.length) {
+        return remaining.map((node, index) => ({
+          ...node,
+          data: { ...node.data, isEntry: index === 0 },
+        }));
+      }
+      return remaining;
+    });
+    setEdges((current) => current.filter((edge) => (
+      edge.source !== selectedNode.id && edge.target !== selectedNode.id
+    )));
+    setSelectedNodeId(null);
+  };
+
+  const deleteSelectedEdge = () => {
+    if (!selectedEdge) return;
+    setEdges((current) => current.filter((edge) => edge.id !== selectedEdge.id));
+    setSelectedEdgeId(null);
+  };
+
   return (
-    <div style={{ height: 640, display: 'grid', gridTemplateColumns: '220px minmax(0, 1fr) 260px', border: '1px solid #d9d9d9', background: '#fff' }}>
+    <div style={{ overflowX: 'auto', border: '1px solid #d9d9d9', background: '#fff' }}>
+      <div style={{ height: 640, minWidth: 720, display: 'grid', gridTemplateColumns: '220px minmax(0, 1fr) 260px' }}>
       <aside style={{ borderRight: '1px solid #f0f0f0', padding: 14, overflowY: 'auto' }}>
         <Typography.Text strong>Agent Library</Typography.Text>
         <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
@@ -232,7 +285,10 @@ const WorkflowBuilder = forwardRef<WorkflowBuilderHandle, Props>(function Workfl
             <div
               key={agent.id}
               draggable
-              onDragStart={(event) => event.dataTransfer.setData('application/axonflow-agent', agent.id)}
+              onDragStart={(event) => {
+                event.dataTransfer.setData('application/axonflow-agent', agent.id);
+                event.dataTransfer.effectAllowed = 'move';
+              }}
               title={agent.description}
               style={{ padding: '9px 10px', border: '1px solid #d9d9d9', borderRadius: 4, cursor: 'grab', background: '#fafafa' }}
             >
@@ -242,7 +298,15 @@ const WorkflowBuilder = forwardRef<WorkflowBuilderHandle, Props>(function Workfl
           ))}
         </div>
       </aside>
-      <div ref={canvasRef} onDrop={onDrop} onDragOver={(event) => event.preventDefault()} style={{ minWidth: 0 }}>
+      <div
+        ref={canvasRef}
+        onDrop={onDrop}
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+        }}
+        style={{ minWidth: 0 }}
+      >
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -269,7 +333,9 @@ const WorkflowBuilder = forwardRef<WorkflowBuilderHandle, Props>(function Workfl
               <Select
                 style={{ width: '100%', marginTop: 4 }}
                 value={selectedNode.data.agentId}
-                options={agents.map((agent) => ({ value: agent.id, label: agent.name }))}
+                options={agents
+                  .filter((agent) => agent.id === selectedNode.data.agentId || !nodes.some((node) => node.data.agentId === agent.id))
+                  .map((agent) => ({ value: agent.id, label: agent.name }))}
                 onChange={(agentId) => {
                   const agent = agents.find((item) => item.id === agentId);
                   updateNode({ agentId, label: agent?.name || agentId });
@@ -280,9 +346,26 @@ const WorkflowBuilder = forwardRef<WorkflowBuilderHandle, Props>(function Workfl
               <Typography.Text type="secondary">Label</Typography.Text>
               <Input value={selectedNode.data.label} onChange={(event) => updateNode({ label: event.target.value })} style={{ marginTop: 4 }} />
             </div>
-            <Checkbox checked={selectedNode.data.isEntry} onChange={(event) => updateNode({ isEntry: event.target.checked })}>
+            <div>
+              <Typography.Text type="secondary">Workflow responsibility</Typography.Text>
+              <Input.TextArea
+                rows={5}
+                value={selectedNode.data.responsibility}
+                placeholder="Describe this Agent's responsibility in this workflow"
+                onChange={(event) => updateNode({ responsibility: event.target.value })}
+                style={{ marginTop: 4 }}
+              />
+            </div>
+            <Checkbox checked={selectedNode.data.isEntry} onChange={(event) => event.target.checked && updateNode({ isEntry: true })}>
               Entry node
             </Checkbox>
+            <Checkbox
+              checked={selectedNode.data.terminateOnSuccess}
+              onChange={(event) => updateNode({ terminateOnSuccess: event.target.checked })}
+            >
+              Complete workflow when this Agent succeeds
+            </Checkbox>
+            <Button danger onClick={deleteSelectedNode}>Remove node</Button>
           </div>
         )}
         {selectedEdge && (
@@ -294,10 +377,12 @@ const WorkflowBuilder = forwardRef<WorkflowBuilderHandle, Props>(function Workfl
               value={String((selectedEdge.data?.condition as PlatformEdge['condition'])?.value || '')}
               onChange={(event) => updateEdgeCondition(event.target.value)}
             />
+            <Button danger onClick={deleteSelectedEdge}>Remove route</Button>
           </div>
         )}
         {!selectedNode && !selectedEdge && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Select a node or route" />}
       </aside>
+      </div>
     </div>
   );
 });

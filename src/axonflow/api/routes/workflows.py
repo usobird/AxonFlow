@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,6 +39,13 @@ class WorkflowUpdateRequest(BaseModel):
         if (self.workflow is None) == (self.yaml_content is None):
             raise ValueError("Provide exactly one of workflow or yaml_content")
         return self
+
+
+class WorkflowCreateRequest(BaseModel):
+    workflow: PlatformWorkflow
+
+
+_WORKFLOW_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{2,63}$")
 
 
 def _now() -> str:
@@ -93,6 +101,11 @@ def _write_runtime_config(workflow: PlatformWorkflow) -> None:
 
 
 def _validate_agents(workflow: PlatformWorkflow) -> None:
+    if not workflow.nodes:
+        raise HTTPException(
+            status_code=422,
+            detail="A workflow must contain at least one Agent node",
+        )
     available = {agent.id for agent in load_all_agent_configs(get_config_dir() / "agents")}
     missing = sorted({node.agent_id for node in workflow.nodes} - available)
     if missing:
@@ -126,6 +139,36 @@ async def list_workflows() -> list[dict[str, Any]]:
         if store.get_workflow(config.id) is None:
             store.save_workflow(PlatformWorkflow.from_workflow_config(config))
     return [_response(workflow) for workflow in store.list_workflows()]
+
+
+@router.post("", status_code=201)
+async def create_workflow(body: WorkflowCreateRequest) -> dict[str, Any]:
+    """Persist a visual workflow and make it immediately runnable."""
+    workflow = body.workflow
+    if not _WORKFLOW_ID_PATTERN.fullmatch(workflow.id):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Workflow ID must use lowercase letters, numbers, and hyphens, "
+                "and start with a letter"
+            ),
+        )
+    if not workflow.name.strip():
+        raise HTTPException(status_code=422, detail="Workflow name is required")
+    workflow.name = workflow.name.strip()
+
+    store = get_platform_store()
+    exists_in_config = any(
+        config.id == workflow.id
+        for config in load_all_workflow_configs(get_config_dir() / "workflows")
+    )
+    if store.get_workflow(workflow.id) is not None or exists_in_config:
+        raise HTTPException(status_code=409, detail=f"Workflow already exists: {workflow.id}")
+
+    _validate_agents(workflow)
+    _write_runtime_config(workflow)
+    store.save_workflow(workflow)
+    return _response(workflow)
 
 
 @router.get("/{workflow_id}")
