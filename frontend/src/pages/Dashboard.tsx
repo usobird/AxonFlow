@@ -11,20 +11,45 @@ interface SystemStatus {
   token_usage: Record<string, any>;
 }
 
+const agentStatePresentation: Record<string, { label: string; color: string }> = {
+  idle: { label: 'Idle', color: 'default' },
+  running: { label: 'Ready', color: 'green' },
+  working: { label: 'Working', color: 'blue' },
+  error: { label: 'Error', color: 'red' },
+  stopped: { label: 'Stopped', color: 'default' },
+};
+
 export default function Dashboard() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchApi<SystemStatus>('/api/system/status')
-      .then(setStatus)
-      .catch(console.error)
-      .finally(() => setLoading(false));
+    let mounted = true;
+    const loadStatus = async () => {
+      try {
+        const nextStatus = await fetchApi<SystemStatus>('/api/system/status');
+        if (mounted) setStatus(nextStatus);
+      } catch (error) {
+        console.error(error);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    void loadStatus();
+    const intervalId = window.setInterval(() => { void loadStatus(); }, 2000);
+    return () => {
+      mounted = false;
+      window.clearInterval(intervalId);
+    };
   }, []);
 
   if (loading) return <Spin size="large" style={{ display: 'block', margin: '100px auto' }} />;
 
-  const agentCount = status ? Object.keys(status.agents).length : 0;
+  const agentStates = Object.values(status?.agents || {});
+  const registeredAgentCount = agentStates.length;
+  const workingAgentCount = agentStates.filter((state) => state === 'working').length;
+  const readyAgentCount = agentStates.filter((state) => state === 'running').length;
   const toolCount = status?.tools?.length || 0;
   const totalTokens = status?.token_usage?.total_tokens || 0;
 
@@ -35,19 +60,22 @@ export default function Dashboard() {
   return (
     <>
       <Typography.Title level={3}>Dashboard</Typography.Title>
-      <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={8}>
-          <StatusCard title="Active Agents" value={agentCount} color="#1890ff" icon={<RobotOutlined />} />
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24} sm={12} lg={6}>
+          <StatusCard title="Working Agents" value={workingAgentCount} color="#1677ff" icon={<RobotOutlined />} />
         </Col>
-        <Col span={8}>
+        <Col xs={24} sm={12} lg={6}>
+          <StatusCard title="Ready Agents" value={readyAgentCount} color="#52c41a" icon={<RobotOutlined />} />
+        </Col>
+        <Col xs={24} sm={12} lg={6}>
           <StatusCard title="Registered Tools" value={toolCount} color="#52c41a" icon={<ThunderboltOutlined />} />
         </Col>
-        <Col span={8}>
+        <Col xs={24} sm={12} lg={6}>
           <StatusCard title="Tokens Used" value={totalTokens} color="#faad14" icon={<ApartmentOutlined />} />
         </Col>
       </Row>
 
-      <Typography.Title level={5}>Agent Status</Typography.Title>
+      <Typography.Title level={5}>Agent Activity ({registeredAgentCount} registered)</Typography.Title>
       <Table
         dataSource={agentData}
         rowKey="id"
@@ -55,14 +83,13 @@ export default function Dashboard() {
         columns={[
           { title: 'Agent ID', dataIndex: 'id', key: 'id' },
           {
-            title: 'State',
+            title: 'Activity',
             dataIndex: 'state',
             key: 'state',
-            render: (s: string) => (
-              <Tag color={s === 'running' ? 'green' : s === 'working' ? 'blue' : s === 'error' ? 'red' : 'default'}>
-                {s}
-              </Tag>
-            ),
+            render: (state: string) => {
+              const presentation = agentStatePresentation[state] || agentStatePresentation.idle;
+              return <Tag color={presentation.color}>{presentation.label}</Tag>;
+            },
           },
         ]}
       />
