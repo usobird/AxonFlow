@@ -19,21 +19,26 @@ interface ModelProfile {
   config: { provider: string; name: string };
 }
 
+interface Credential { id: string; name: string; masked_value?: string; }
+
 export default function Agents() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [profiles, setProfiles] = useState<ModelProfile[]>([]);
+  const [credentials, setCredentials] = useState<Credential[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm] = Form.useForm();
   const navigate = useNavigate();
 
   const load = async () => {
-    const [agentData, profileData] = await Promise.all([
+    const [agentData, profileData, credentialData] = await Promise.all([
       fetchApi<Agent[]>('/api/agents'),
       fetchApi<ModelProfile[]>('/api/model-profiles'),
+      fetchApi<Credential[]>('/api/credentials'),
     ]);
     setAgents(agentData);
     setProfiles(profileData);
+    setCredentials(credentialData);
   };
 
   useEffect(() => {
@@ -65,11 +70,11 @@ export default function Agents() {
     <>
       <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 16 }}>
         <Typography.Title level={3} style={{ margin: 0 }}>Agents</Typography.Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate} disabled={!profiles.length}>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
           New Agent
         </Button>
       </Space>
-      {!profiles.length && <Alert type="warning" showIcon message="Create a model profile in Settings before creating an Agent." style={{ marginBottom: 16 }} />}
+      {!profiles.length && <Alert type="warning" showIcon message="Create a model profile in Settings before creating a base Agent." style={{ marginBottom: 16 }} />}
       <Table<Agent>
         dataSource={agents}
         rowKey="id"
@@ -103,7 +108,7 @@ export default function Agents() {
       />
 
       <Modal title="New Agent" open={createOpen} onCancel={() => setCreateOpen(false)} onOk={createAgent} okText="Create Agent">
-        <Form form={createForm} layout="vertical">
+        <Form form={createForm} layout="vertical" initialValues={{ agent_type: 'base' }}>
           <Form.Item
             name="id"
             label="Agent ID"
@@ -120,14 +125,27 @@ export default function Agents() {
           <Form.Item name="role" label="Role">
             <Input.TextArea rows={3} placeholder="Produces concise research summaries." />
           </Form.Item>
-          <Form.Item name="model_profile_id" label="Model profile" rules={[{ required: true, message: 'Select a model profile.' }]}>
-            <Select
-              placeholder="Select provider and model"
-              options={profiles.map((profile) => ({
-                value: profile.id,
-                label: `${profile.name} - ${profile.config.provider} / ${profile.config.name}`,
-              }))}
-            />
+          <Form.Item name="agent_type" label="Execution type" rules={[{ required: true }]}>
+            <Select options={[{ value: 'base', label: 'Base Agent' }, { value: 'remote', label: 'Remote Agent' }]} />
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(previous, current) => previous.agent_type !== current.agent_type}>
+            {({ getFieldValue }) => getFieldValue('agent_type') === 'remote' ? <>
+              <Form.Item name="remote_endpoint" label="Remote endpoint" rules={[{ required: true }]}>
+                <Input placeholder="https://generation.example.com/v1/jobs" />
+              </Form.Item>
+              <Form.Item name="remote_credential_id" label="Remote credential">
+                <Select allowClear options={credentials.map((credential) => ({ value: credential.id, label: `${credential.name} (${credential.masked_value || 'hidden'})` }))} />
+              </Form.Item>
+              <Form.Item name="remote_api_key_env" label="Fallback environment variable"><Input placeholder="GENERATION_API_KEY" /></Form.Item>
+            </> : <Form.Item name="model_profile_id" label="Model profile" rules={[{ required: true, message: 'Select a model profile.' }]}>
+              <Select
+                placeholder="Select provider and model"
+                options={profiles.map((profile) => ({
+                  value: profile.id,
+                  label: `${profile.name} - ${profile.config.provider} / ${profile.config.name}`,
+                }))}
+              />
+            </Form.Item>}
           </Form.Item>
         </Form>
       </Modal>

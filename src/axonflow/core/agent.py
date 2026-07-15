@@ -486,6 +486,10 @@ def create_agent(
     # 优先使用 class_path 动态导入
     if config.class_path:
         agent_cls = _import_agent_class(config.class_path)
+    elif config.agent_type == "remote":
+        from axonflow.agents.remote import RemoteAgent
+
+        agent_cls = RemoteAgent
     elif config.agent_type in _AGENT_TYPE_REGISTRY:
         agent_cls = _AGENT_TYPE_REGISTRY[config.agent_type]
     else:

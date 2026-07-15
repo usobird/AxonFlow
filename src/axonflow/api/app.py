@@ -19,6 +19,7 @@ from axonflow.api.routes import (
     logs,
     model_profiles,
     observability,
+    skills,
     system,
     workflows,
 )
@@ -121,6 +122,7 @@ def create_app(config_dir: str = "config") -> FastAPI:
     app.include_router(credentials.router)
     app.include_router(model_profiles.router)
     app.include_router(observability.router)
+    app.include_router(skills.router)
 
     # WebSocket 端点
     @app.websocket("/ws/events")

@@ -12,6 +12,7 @@ import AgentDetail from './pages/AgentDetail';
 import Logs from './pages/Logs';
 import Settings from './pages/Settings';
 import Observability from './pages/Observability';
+import Skills from './pages/Skills';
 
 export default function App() {
   return (
@@ -26,6 +27,7 @@ export default function App() {
             <Route path="/workflows/:id/runs/:runId" element={<WorkflowRun />} />
             <Route path="/agents" element={<Agents />} />
             <Route path="/agents/:id" element={<AgentDetail />} />
+            <Route path="/skills" element={<Skills />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/observability" element={<Observability />} />
             <Route path="/settings" element={<Settings />} />
