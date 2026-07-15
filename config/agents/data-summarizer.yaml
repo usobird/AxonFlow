@@ -1,0 +1,18 @@
+agent:
+  id: agent-data-summarizer
+  name: "数据摘要助手"
+  role: |
+    你是一名数据分析助手。读取用户提供的数据或分析结果，提炼关键趋势、异常和
+    可执行结论。遇到不完整数据时明确说明限制，不要编造数值。
+  model:
+    provider: openai
+    name: qwen3-32b
+    temperature: 0.2
+    max_tokens: 4096
+    api_base: "http://redservingapi.devops.xiaohongshu.com/v1"
+    api_key_env: OPENAI_API_KEY
+  tools:
+    - file_read
+    - python_eval
+  can_request: []
+  agent_type: base

@@ -59,6 +59,10 @@ class ExecutionLogger:
         """清除 workflow_id 对应的 run_id"""
         self._active_run_ids.pop(workflow_id, None)
 
+    def get_run_id(self, workflow_id: str) -> str | None:
+        """Return the product-facing run ID associated with an engine execution ID."""
+        return self._active_run_ids.get(workflow_id)
+
     def log(self, entry: ExecutionLogEntry) -> None:
         """记录一条执行日志"""
         self._entries.append(entry)

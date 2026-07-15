@@ -1,6 +1,7 @@
 """PromptBuilder 测试"""
 
 from axonflow.config.models import AgentConfig, ModelConfig
+from axonflow.core.context import WorkflowContext
 from axonflow.core.message import Message, MessageType
 from axonflow.llm.prompt_builder import PromptBuilder
 from axonflow.memory.base import MemoryRecord, MemoryScope
@@ -41,6 +42,23 @@ class TestPromptBuilder:
             incoming_message=_make_message(),
         )
         assert "测试用的智能体" in messages[0]["content"]
+
+    def test_build_includes_workflow_responsibility_override(self):
+        context = WorkflowContext(
+            shared_state={
+                "agent_role_overrides": {
+                    "agent-test": "只负责核查事实，不要撰写最终答案。",
+                }
+            }
+        )
+        messages = PromptBuilder.build(
+            agent_config=_make_config(),
+            incoming_message=_make_message(),
+            context=context,
+        )
+
+        assert "当前工作流职责" in messages[0]["content"]
+        assert "只负责核查事实" in messages[0]["content"]
 
     def test_build_with_no_memories(self):
         messages = PromptBuilder.build(

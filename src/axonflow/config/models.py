@@ -6,7 +6,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # ============================================================
 # LLM 模型配置
 # ============================================================
@@ -19,8 +18,10 @@ class ModelConfig(BaseModel):
     name: str = "gpt-4o"
     temperature: float = 0.7
     max_tokens: int = 4096
+    timeout: float = 60.0
     api_base: str | None = None
     api_key_env: str | None = None  # 环境变量名，如 OPENAI_API_KEY
+    credential_id: str | None = None  # 平台加密凭据 ID，优先于 api_key_env
     fallback_models: list[str] = Field(default_factory=list)
 
 
@@ -89,6 +90,16 @@ class AgentConfig(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)  # 自定义扩展参数
     persona: PersonaConfig = Field(default_factory=PersonaConfig)  # 人设配置
     skills: list[str] = Field(default_factory=list)  # 关联的 skill 名称列表
+
+
+class AgentInstanceConfig(BaseModel):
+    """A workflow-scoped Agent entity that reuses an AgentConfig template."""
+
+    id: str
+    node_id: str
+    template_id: str
+    name: str
+    model_profile_id: str | None = None
 
 
 # ============================================================
@@ -175,6 +186,7 @@ class WorkflowConfig(BaseModel):
     extends: str | None = None  # 继承基础工作流模板 ID
     trigger: TriggerConfig = Field(default_factory=TriggerConfig)
     agents: list[str] = Field(default_factory=list)
+    agent_instances: list[AgentInstanceConfig] = Field(default_factory=list)
     flow: FlowConfig
     context: dict[str, Any] = Field(default_factory=dict)
 

@@ -1,0 +1,16 @@
+agent:
+  id: agent-wanqing-smoke-test
+  name: "Wanqing 验证助手"
+  role: |
+    你是一个简洁、准确的中文助手。直接回答用户问题；不调用工具，不执行文件或系统操作。
+  model:
+    provider: openai_compatible
+    name: ep-vtge31-1784019040094131875
+    temperature: 0.2
+    max_tokens: 512
+    timeout: 45
+    api_base: "https://wanqing-api.corp.kuaishou.com/api/gateway/v1/endpoints"
+    api_key_env: WQ_API_KEY
+  tools: []
+  can_request: []
+  agent_type: base

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Typography, Table, Button, Tag, Space, Spin } from 'antd';
-import { PlayCircleOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, PlusOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { fetchApi } from '../api/client';
 
@@ -20,7 +20,12 @@ export default function Workflows() {
 
   return (
     <>
-      <Typography.Title level={3}>Workflows</Typography.Title>
+      <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 16 }}>
+        <Typography.Title level={3} style={{ margin: 0 }}>Workflows</Typography.Title>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/workflows/new')}>
+          New Workflow
+        </Button>
+      </Space>
       <Table
         dataSource={workflows}
         rowKey="id"
@@ -29,9 +34,9 @@ export default function Workflows() {
           { title: 'Name', dataIndex: 'name', key: 'name' },
           {
             title: 'Agents',
-            dataIndex: 'agents',
+            dataIndex: 'agent_count',
             key: 'agents',
-            render: (agents: string[]) => agents?.length || 0,
+            render: (count: number) => count || 0,
           },
           {
             title: 'Trigger',
@@ -45,7 +50,7 @@ export default function Workflows() {
               <Space>
                 <Button type="primary" size="small" icon={<PlayCircleOutlined />}
                   onClick={() => navigate(`/workflows/${r.id}`)}>
-                  Detail
+                  Open
                 </Button>
               </Space>
             ),

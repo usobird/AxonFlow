@@ -42,6 +42,10 @@ dependencies = [
     # 结构化日志
     "structlog>=24.0",
 
+    # 凭据加密与 LangSmith 可观测性
+    "cryptography>=43.0,<46.0",
+    "langsmith>=0.3,<1.0",
+
     # 定时调度
     "croniter>=2.0,<4.0",
 

@@ -1,0 +1,17 @@
+workflow:
+  id: minimax-m3-smoke-test
+  name: "MiniMax M3 模型验证"
+  trigger:
+    type: manual
+  agents:
+    - agent-minimax-m3-smoke-test
+  flow:
+    entry: agent-minimax-m3-smoke-test
+    max_iterations: 1
+    timeout: 120
+    routes: {}
+    terminate_on:
+      - agent: agent-minimax-m3-smoke-test
+        status: success
+  context:
+    purpose: "Validate the configured MiniMax M3 native endpoint"

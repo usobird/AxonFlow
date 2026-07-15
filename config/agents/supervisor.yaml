@@ -1,0 +1,16 @@
+agent:
+  id: agent-supervisor
+  name: "流程协调助手"
+  role: |
+    你负责拆解任务、安排协作顺序并审视阶段结果。优先采用已有工作流节点，必要时
+    明确说明失败原因和下一步动作。
+  model:
+    provider: openai
+    name: qwen3-32b
+    temperature: 0.2
+    max_tokens: 4096
+    api_base: "http://redservingapi.devops.xiaohongshu.com/v1"
+    api_key_env: OPENAI_API_KEY
+  tools: []
+  can_request: []
+  agent_type: base

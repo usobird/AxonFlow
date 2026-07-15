@@ -1,133 +1,144 @@
-import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { Typography, Tabs, Button, message, Input, Modal, Spin, Table, Tag } from 'antd';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { Button, Input, Modal, Space, Spin, Table, Tag, Typography, message } from 'antd';
 import { PlayCircleOutlined, SaveOutlined } from '@ant-design/icons';
-import YamlEditor from '../components/YamlEditor';
+import WorkflowBuilder from '../components/WorkflowBuilder';
+import type {
+  AgentManifest,
+  ModelProfile,
+  PlatformEdge,
+  PlatformNode,
+  WorkflowBuilderHandle,
+} from '../components/WorkflowBuilder';
 import { fetchApi } from '../api/client';
+
+interface Workflow {
+  id: string;
+  name: string;
+  description: string;
+  nodes: PlatformNode[];
+  edges: PlatformEdge[];
+  trigger: { type: string };
+  context: Record<string, unknown>;
+  max_iterations: number;
+  timeout: number;
+  mode: string;
+  terminate_on: Array<Record<string, unknown>>;
+  supervisor?: Record<string, unknown> | null;
+}
+
+const statusColor: Record<string, string> = {
+  completed: 'green',
+  error: 'red',
+  timeout: 'orange',
+  max_iterations_reached: 'orange',
+  running: 'blue',
+};
 
 export default function WorkflowDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [workflow, setWorkflow] = useState<any>(null);
-  const [yaml, setYaml] = useState('');
+  const [workflow, setWorkflow] = useState<Workflow | null>(null);
+  const [agents, setAgents] = useState<AgentManifest[]>([]);
+  const [modelProfiles, setModelProfiles] = useState<ModelProfile[]>([]);
   const [runs, setRuns] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [runModalOpen, setRunModalOpen] = useState(false);
-  const [runInput, setRunInput] = useState('Hello');
+  const [runInput, setRunInput] = useState('');
+  const builderRef = useRef<WorkflowBuilderHandle>(null);
 
   useEffect(() => {
     if (!id) return;
     Promise.all([
-      fetchApi(`/api/workflows/${id}`),
-      fetchApi(`/api/workflows/${id}/runs`),
+      fetchApi<Workflow>(`/api/workflows/${id}`),
+      fetchApi<AgentManifest[]>('/api/agents/manifests'),
+      fetchApi<ModelProfile[]>('/api/model-profiles'),
+      fetchApi<any[]>(`/api/workflows/${id}/runs`),
     ])
-      .then(([wf, rs]) => {
-        setWorkflow(wf);
-        setYaml(JSON.stringify(wf, null, 2));
-        setRuns(rs);
+      .then(([definition, manifests, profiles, history]) => {
+        setWorkflow(definition);
+        setAgents(manifests);
+        setModelProfiles(profiles);
+        setRuns(history);
       })
-      .catch(console.error)
+      .catch((error) => message.error(error.message))
       .finally(() => setLoading(false));
   }, [id]);
 
   const handleSave = async () => {
+    if (!workflow || !id) return;
+    setSaving(true);
     try {
-      await fetchApi(`/api/workflows/${id}`, {
+      const graph = builderRef.current?.getGraph();
+      const saved = await fetchApi<Workflow>(`/api/workflows/${id}`, {
         method: 'PUT',
-        body: JSON.stringify({ yaml_content: yaml }),
+        body: JSON.stringify({ workflow: { ...workflow, ...graph } }),
       });
+      setWorkflow(saved);
       message.success('Workflow saved');
-    } catch (e: any) {
-      message.error(e.message);
+    } catch (error: any) {
+      message.error(error.message);
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleRun = async () => {
+    if (!id) return;
     try {
-      const res = await fetchApi(`/api/workflows/${id}/run`, {
+      const response = await fetchApi<{ run_id: string }>(`/api/workflows/${id}/run`, {
         method: 'POST',
         body: JSON.stringify({ input: runInput }),
       });
       setRunModalOpen(false);
-      message.success(`Workflow started: ${res.run_id}`);
-      navigate(`/workflows/${id}/runs/${res.run_id}`);
-    } catch (e: any) {
-      message.error(e.message);
+      navigate(`/workflows/${id}/runs/${response.run_id}`);
+    } catch (error: any) {
+      message.error(error.message);
     }
   };
 
-  if (loading) return <Spin size="large" style={{ display: 'block', margin: '100px auto' }} />;
+  if (loading || !workflow) return <Spin size="large" style={{ display: 'block', margin: '100px auto' }} />;
 
   return (
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          Workflow: {workflow?.name || id}
-        </Typography.Title>
-        <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => setRunModalOpen(true)}>
-          Run
-        </Button>
+        <div>
+          <Typography.Title level={3} style={{ margin: 0 }}>{workflow.name}</Typography.Title>
+          <Typography.Text type="secondary">{workflow.id} · {workflow.nodes.length} agents · {workflow.mode}</Typography.Text>
+        </div>
+        <Space>
+          <Button icon={<SaveOutlined />} loading={saving} onClick={handleSave}>Save</Button>
+          <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => setRunModalOpen(true)}>Run</Button>
+        </Space>
       </div>
 
-      <Tabs items={[
-        {
-          key: 'config',
-          label: 'Configuration',
-          children: (
-            <>
-              <YamlEditor value={yaml} onChange={setYaml} height="500px" />
-              <Button type="primary" icon={<SaveOutlined />} onClick={handleSave} style={{ marginTop: 12 }}>
-                Save
-              </Button>
-            </>
-          ),
-        },
-        {
-          key: 'runs',
-          label: 'Run History',
-          children: (
-            <Table
-              dataSource={runs}
-              rowKey="run_id"
-              pagination={false}
-              columns={[
-                { title: 'Run ID', dataIndex: 'run_id', key: 'run_id' },
-                {
-                  title: 'Status',
-                  dataIndex: 'status',
-                  key: 'status',
-                  render: (s: string) => <Tag color={s === 'completed' ? 'green' : s === 'error' ? 'red' : 'blue'}>{s}</Tag>,
-                },
-                { title: 'Iterations', dataIndex: 'iterations', key: 'iterations' },
-                { title: 'Duration (s)', dataIndex: 'duration_seconds', key: 'duration' },
-                {
-                  title: 'Actions',
-                  key: 'actions',
-                  render: (_: any, r: any) => (
-                    <Button size="small" onClick={() => navigate(`/workflows/${id}/runs/${r.run_id}`)}>
-                      View
-                    </Button>
-                  ),
-                },
-              ]}
-            />
-          ),
-        },
-      ]} />
+      <WorkflowBuilder
+        initialNodes={workflow.nodes}
+        initialEdges={workflow.edges}
+        agents={agents}
+        modelProfiles={modelProfiles}
+        ref={builderRef}
+      />
 
-      <Modal
-        title="Run Workflow"
-        open={runModalOpen}
-        onOk={handleRun}
-        onCancel={() => setRunModalOpen(false)}
-      >
-        <Typography.Text>Input:</Typography.Text>
-        <Input.TextArea
-          value={runInput}
-          onChange={(e) => setRunInput(e.target.value)}
-          rows={4}
-          style={{ marginTop: 8 }}
-        />
+      <Typography.Title level={5} style={{ marginTop: 24 }}>Run History</Typography.Title>
+      <Table
+        size="small"
+        dataSource={runs}
+        rowKey="run_id"
+        pagination={false}
+        columns={[
+          { title: 'Run ID', dataIndex: 'run_id', key: 'run_id' },
+          { title: 'Started', dataIndex: 'started_at', key: 'started_at', render: (value: string) => new Date(value).toLocaleString() },
+          { title: 'Status', dataIndex: 'status', key: 'status', render: (value: string) => <Tag color={statusColor[value] || 'default'}>{value}</Tag> },
+          { title: 'Iterations', key: 'iterations', render: (_: unknown, run: any) => run.result?.iterations ?? '-' },
+          { title: 'Duration', key: 'duration', render: (_: unknown, run: any) => run.result?.duration_seconds ? `${run.result.duration_seconds}s` : '-' },
+          { title: 'Action', key: 'action', render: (_: unknown, run: any) => <Button size="small" onClick={() => navigate(`/workflows/${id}/runs/${run.run_id}`)}>View</Button> },
+        ]}
+      />
+
+      <Modal title="Run Workflow" open={runModalOpen} onOk={handleRun} onCancel={() => setRunModalOpen(false)}>
+        <Input.TextArea value={runInput} onChange={(event) => setRunInput(event.target.value)} rows={5} placeholder="Describe the task for this workflow" />
       </Modal>
     </>
   );

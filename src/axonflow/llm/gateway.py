@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
+import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from typing import Any
 
 import litellm
 import structlog
+from aiohttp import ClientSession, ClientTimeout
 
 from axonflow.config.models import ModelConfig
+from axonflow.llm.providers import get_provider, resolve_model_name
 from axonflow.llm.token_tracker import TokenTracker
+from axonflow.observability.langsmith import LangSmithReporter
 
 logger = structlog.get_logger()
 
@@ -34,6 +44,16 @@ class LLMResponse:
     total_tokens: int = 0
 
 
+@dataclass(frozen=True)
+class LLMTraceContext:
+    """Associates a model invocation with the product-facing workflow run."""
+
+    workflow_id: str
+    execution_id: str
+    agent_id: str
+    run_id: str | None = None
+
+
 class LLMGateway:
     """统一 LLM 调用网关
 
@@ -46,9 +66,18 @@ class LLMGateway:
         self,
         default_model: ModelConfig | None = None,
         token_budget: int | None = None,
+        credential_resolver: Callable[[str], dict[str, str]] | None = None,
+        span_store: Any | None = None,
     ) -> None:
         self._default_model = default_model or ModelConfig()
         self.token_tracker = TokenTracker(budget=token_budget)
+        self._credential_resolver = credential_resolver
+        self._span_store = span_store
+        self._langsmith = LangSmithReporter(
+            span_store.get_observability_settings if span_store else None,
+            credential_resolver,
+        )
+        self._workflow_traces: dict[str, Any] = {}
 
         # 关闭 litellm 自带的冗余日志
         litellm.suppress_debug_info = True
@@ -63,6 +92,8 @@ class LLMGateway:
             return False, "missing_model_name"
         if config.max_tokens <= 0:
             return False, "invalid_max_tokens"
+        if config.timeout <= 0:
+            return False, "invalid_timeout"
         if config.api_key_env is not None and not config.api_key_env.strip():
             return False, "invalid_api_key_env"
         return True, None
@@ -72,26 +103,20 @@ class LLMGateway:
         override: ModelConfig | None,
         prefer_default: bool,
     ) -> ModelConfig:
-        """决定本次调用使用的模型配置"""
-        if prefer_default:
-            default_ok, default_reason = self._validate_model_config(self._default_model)
-            if default_ok:
-                return self._default_model
-            logger.warning(
-                "llm.default_model_invalid",
-                reason=default_reason,
-            )
-
+        """Resolve Agent overrides before the global default model."""
         if override:
             override_ok, override_reason = self._validate_model_config(override)
             if override_ok:
-                if prefer_default:
-                    logger.info("llm.agent_model_fallback", reason=override_reason)
                 return override
             logger.error(
                 "llm.agent_model_invalid",
                 reason=override_reason,
             )
+
+        default_ok, default_reason = self._validate_model_config(self._default_model)
+        if default_ok:
+            return self._default_model
+        logger.warning("llm.default_model_invalid", reason=default_reason)
 
         raise LLMUnavailableError("No valid LLM model configuration available")
 
@@ -103,35 +128,115 @@ class LLMGateway:
         当使用自定义 api_base 时，加上 openai/ 前缀确保 litellm
         走 OpenAI 兼容协议路径。
         """
-        provider = config.provider.lower()
-        name = config.name
+        return resolve_model_name(config.provider, config.name, config.api_base)
 
-        if provider == "openai":
-            # 使用自定义 api_base 时，需要 openai/ 前缀让 litellm 识别协议
-            if config.api_base:
-                return f"openai/{name}"
-            return name  # 官方 OpenAI，litellm 默认识别
-        if provider in ("anthropic", "ollama", "deepseek", "groq"):
-            return f"{provider}/{name}"
-        # 自定义 API base 的通用兼容
-        return name
+    async def start_workflow_trace(self, run_id: str, workflow_id: str, input_data: str) -> None:
+        """Create the LangSmith root span before child Agent/LLM spans are emitted."""
+        root_run = await self._langsmith.start_workflow(
+            trace_id=str(uuid.uuid4()),
+            workflow_id=workflow_id,
+            input_data=input_data,
+        )
+        if root_run is not None:
+            self._workflow_traces[run_id] = root_run
 
-    def _setup_env(self, config: ModelConfig) -> dict:
-        """设置 LLM API 环境变量，并返回需要传给 litellm 的额外参数"""
+    async def finish_workflow_trace(
+        self,
+        run_id: str,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> None:
+        root_run = self._workflow_traces.pop(run_id, None)
+        await self._langsmith.finish(root_run, outputs=result, error=error)
+
+    def _setup_auth(self, config: ModelConfig) -> tuple[dict[str, str], str | None]:
+        """Resolve a platform credential first, then retain environment variable compatibility."""
         extra_kwargs: dict = {}
-        if config.api_key_env:
-            # 确保环境变量存在
-            key = os.environ.get(config.api_key_env)
+        credential_id: str | None = None
+        if config.credential_id:
+            if self._credential_resolver is None:
+                raise LLMUnavailableError("Credential storage is unavailable")
+            credential = self._credential_resolver(config.credential_id)
+            extra_kwargs["api_key"] = credential["secret"]
+            credential_id = credential["id"]
+        else:
+            env_var = config.api_key_env or get_provider(config.provider).default_key_env
+            key = os.environ.get(env_var) if env_var else None
             if not key:
                 logger.warning(
                     "llm.api_key_missing",
-                    env_var=config.api_key_env,
+                    env_var=env_var,
                 )
             else:
                 extra_kwargs["api_key"] = key
         if config.api_base:
             extra_kwargs["api_base"] = config.api_base
-        return extra_kwargs
+        return extra_kwargs, credential_id
+
+    async def _complete_provider_request(self, config: ModelConfig, call_kwargs: dict) -> Any:
+        """Use a provider-native request where LiteLLM has no implementation."""
+        if config.provider.lower() == "minimax" and config.name == "MiniMax-M3":
+            return await self._minimax_m3_completion(config, call_kwargs)
+        return await litellm.acompletion(**call_kwargs)
+
+    async def _minimax_m3_completion(self, config: ModelConfig, call_kwargs: dict) -> Any:
+        """Call the MiniMax M3 native endpoint and normalize it to LiteLLM's response shape."""
+        api_base = (config.api_base or "https://api.minimaxi.com/v1").rstrip("/")
+        api_key = call_kwargs.get("api_key")
+        if not api_key:
+            raise LLMUnavailableError("MiniMax M3 requires an API key")
+
+        payload: dict[str, Any] = {
+            "model": config.name,
+            "messages": call_kwargs["messages"],
+            "temperature": config.temperature,
+            "max_completion_tokens": config.max_tokens,
+        }
+        if call_kwargs.get("tools"):
+            payload["tools"] = call_kwargs["tools"]
+
+        timeout = ClientTimeout(total=config.timeout)
+        async with ClientSession(timeout=timeout) as session, session.post(
+            f"{api_base}/text/chatcompletion_v2",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=payload,
+        ) as response:
+            response_text = await response.text()
+            if response.status >= 400:
+                raise LLMUnavailableError(
+                    f"MiniMax M3 HTTP {response.status}: {response_text[:500]}"
+                )
+
+        try:
+            data = json.loads(response_text)
+            choice = data["choices"][0]
+            message = choice["message"]
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            raise LLMUnavailableError("MiniMax M3 returned an invalid response") from exc
+
+        usage = data.get("usage", {})
+        normalized_message = SimpleNamespace(
+            content=message.get("content"),
+            tool_calls=message.get("tool_calls"),
+            reasoning_content=message.get("reasoning_content"),
+        )
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=normalized_message)],
+            usage=SimpleNamespace(
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+            ),
+        )
+
+    @staticmethod
+    def _preview_messages(messages: list[dict], content_policy: str) -> str | None:
+        if content_policy == "metadata_only":
+            return None
+        parts = [str(message.get("content", "")) for message in messages if message.get("content")]
+        preview = "\n".join(parts)
+        if content_policy == "masked_content":
+            return f"{len(messages)} messages, {len(preview)} characters"
+        return preview[:2000]
 
     async def chat(
         self,
@@ -139,6 +244,7 @@ class LLMGateway:
         model_config: ModelConfig | None = None,
         tools: list[dict] | None = None,
         prefer_default: bool = True,
+        trace_context: LLMTraceContext | None = None,
         **kwargs,
     ) -> LLMResponse:
         """统一 LLM 调用入口
@@ -159,14 +265,54 @@ class LLMGateway:
         if self.token_tracker.is_budget_exceeded():
             raise BudgetExceededError(f"Token budget exceeded: {self.token_tracker.total_tokens}")
 
-        env_kwargs = self._setup_env(config)
+        env_kwargs, credential_id = self._setup_auth(config)
         model_str = self._resolve_model_string(config)
+        started_at = datetime.now(UTC)
+        span_id = str(uuid.uuid4())
+        content_policy = "masked_content"
+        if self._span_store is not None:
+            content_policy = self._span_store.get_observability_settings().get(
+                "content_policy", content_policy
+            )
+        span = {
+            "id": span_id,
+            "run_id": trace_context.run_id if trace_context else None,
+            "workflow_id": trace_context.workflow_id if trace_context else None,
+            "execution_id": trace_context.execution_id if trace_context else None,
+            "agent_id": trace_context.agent_id if trace_context else None,
+            "provider": config.provider,
+            "model": model_str,
+            "credential_id": credential_id,
+            "started_at": started_at.isoformat(),
+            "input_preview": self._preview_messages(messages, content_policy),
+            "metadata": {
+                "provider": config.provider,
+                "model": model_str,
+                "content_policy": content_policy,
+            },
+        }
+        if self._span_store is not None:
+            self._span_store.create_llm_span(span)
+        langsmith_run = await self._langsmith.start(
+            span,
+            (
+                {"messages": messages}
+                if content_policy == "full_content"
+                else {"message_count": len(messages)}
+            ),
+            parent=(
+                self._workflow_traces.get(trace_context.run_id)
+                if trace_context and trace_context.run_id
+                else None
+            ),
+        )
 
         call_kwargs: dict = {
             "model": model_str,
             "messages": messages,
             "temperature": config.temperature,
             "max_tokens": config.max_tokens,
+            "timeout": config.timeout,
             **env_kwargs,
             **kwargs,
         }
@@ -174,7 +320,10 @@ class LLMGateway:
             call_kwargs["tools"] = tools
 
         try:
-            response = await litellm.acompletion(**call_kwargs)
+            response = await asyncio.wait_for(
+                self._complete_provider_request(config, call_kwargs),
+                timeout=config.timeout,
+            )
 
             input_tokens = response.usage.prompt_tokens if response.usage else 0
             output_tokens = response.usage.completion_tokens if response.usage else 0
@@ -222,6 +371,19 @@ class LLMGateway:
                 has_tool_calls=tool_calls is not None,
             )
 
+            await self._complete_span(
+                span_id,
+                started_at,
+                input_tokens,
+                output_tokens,
+                self._preview_messages([{"content": content}], content_policy),
+                None,
+            )
+            await self._langsmith.finish(
+                langsmith_run,
+                {"content": content} if content_policy == "full_content" else {"status": "success"},
+            )
+
             return LLMResponse(
                 content=content,
                 model=model_str,
@@ -233,10 +395,41 @@ class LLMGateway:
 
         except Exception as e:
             logger.error("llm.call_failed", model=model_str, error=str(e))
+            await self._complete_span(span_id, started_at, 0, 0, None, str(e))
+            await self._langsmith.finish(langsmith_run, error=str(e))
             # 尝试降级
             if config.fallback_models:
-                return await self._fallback(messages, config, e, tools=tools, **kwargs)
+                return await self._fallback(
+                    messages, config, e, tools=tools, trace_context=trace_context, **kwargs
+                )
             raise LLMUnavailableError(f"LLM call failed: {e}") from e
+
+    async def _complete_span(
+        self,
+        span_id: str,
+        started_at: datetime,
+        input_tokens: int,
+        output_tokens: int,
+        output_preview: str | None,
+        error: str | None,
+    ) -> None:
+        if self._span_store is None:
+            return
+        completed_at = datetime.now(UTC)
+        self._span_store.complete_llm_span(
+            span_id,
+            {
+                "status": "error" if error else "completed",
+                "completed_at": completed_at.isoformat(),
+                "latency_ms": int((completed_at - started_at).total_seconds() * 1000),
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": input_tokens + output_tokens,
+                "output_preview": output_preview,
+                "error": error,
+                "langsmith_trace_url": None,
+            },
+        )
 
     async def _fallback(
         self,
@@ -258,8 +451,10 @@ class LLMGateway:
                     name=fallback_model_name,
                     temperature=original_config.temperature,
                     max_tokens=original_config.max_tokens,
+                    timeout=original_config.timeout,
                     api_base=original_config.api_base,
                     api_key_env=original_config.api_key_env,
+                    credential_id=original_config.credential_id,
                 )
                 return await self.chat(
                     messages,

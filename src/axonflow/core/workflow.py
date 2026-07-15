@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import structlog
 
@@ -15,6 +16,8 @@ from axonflow.core.message import Message, MessageType
 from axonflow.messaging.base import MessageBus
 
 logger = structlog.get_logger()
+
+OrchestratorEventCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
 
 
 class WorkflowResult:
@@ -59,11 +62,13 @@ class BaseOrchestrator(ABC):
         config: WorkflowConfig,
         agent_registry: AgentRegistry,
         message_bus: MessageBus,
+        event_callback: OrchestratorEventCallback | None = None,
         **kwargs,
     ) -> None:
         self.config = config
         self.agents = agent_registry
         self.message_bus = message_bus
+        self._event_callback = event_callback
 
     # -- 抽象方法 ----------------------------------------------------------
 
@@ -103,6 +108,7 @@ class BaseOrchestrator(ABC):
         workflow_id: str,
         step_id: str,
         parent_id: str = "",
+        source_id: str | None = None,
     ) -> None:
         """发送任务消息给指定 Agent"""
         msg = Message(
@@ -115,6 +121,19 @@ class BaseOrchestrator(ABC):
             parent_message_id=parent_id,
         )
         await self.message_bus.send(msg)
+        event_data = {
+            "agent_id": target_id,
+            "source_agent_id": source_id,
+            "step_id": step_id,
+            "payload": payload,
+        }
+        await self._emit("node.task_assigned", event_data)
+        await self._emit("node.task_started", event_data)
+
+    async def _emit(self, event_type: str, data: dict[str, Any]) -> None:
+        """Publish product-level events without coupling the engine to FastAPI."""
+        if self._event_callback is not None:
+            await self._event_callback(event_type, data)
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +157,7 @@ class FlatOrchestrator(BaseOrchestrator):
         # 1. 创建上下文
         ctx = self._create_context(initial_input)
         workflow_id = ctx.workflow_id
+        await self._emit("workflow.context_ready", {"execution_id": workflow_id})
 
         logger.info(
             "workflow.started",
@@ -199,6 +219,15 @@ class FlatOrchestrator(BaseOrchestrator):
                 msg_type=event.type.value,
                 status=event.payload.get("status"),
             )
+            await self._emit(
+                "node.result_ready" if event.type == MessageType.TASK_RESPONSE else "node.error",
+                {
+                    "agent_id": event.sender,
+                    "step_id": event.step_id,
+                    "payload": event.payload,
+                    "error": event.payload.get("error"),
+                },
+            )
 
             # 检查终止条件
             if self._is_terminal(event):
@@ -243,6 +272,7 @@ class FlatOrchestrator(BaseOrchestrator):
                             workflow_id=workflow_id,
                             step_id=f"step-{iteration}",
                             parent_id=event.id,
+                            source_id=event.sender,
                         )
                         join_dispatched_targets.add(join_target)
                         # 重置该 join 点的待收集状态
@@ -260,6 +290,7 @@ class FlatOrchestrator(BaseOrchestrator):
                     workflow_id=workflow_id,
                     step_id=f"step-{iteration}",
                     parent_id=event.id,
+                    source_id=event.sender,
                 )
 
         elapsed = time.monotonic() - start_time

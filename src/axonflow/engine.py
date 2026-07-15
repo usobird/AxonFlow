@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import uuid
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -13,32 +16,33 @@ from axonflow.config.loader import (
     load_all_workflow_configs,
     load_global_config,
 )
-from axonflow.config.models import AxonFlowConfig
+from axonflow.config.models import AgentConfig, AxonFlowConfig, ModelConfig, Route, WorkflowConfig
 from axonflow.core.agent import AgentRegistry, create_agent
-from axonflow.memory.local import InMemoryStore
-from axonflow.core.scheduler import Scheduler
 from axonflow.core.orchestrator_factory import create_orchestrator
+from axonflow.core.scheduler import Scheduler
 from axonflow.core.workflow import WorkflowResult
 from axonflow.llm.gateway import LLMGateway
+from axonflow.memory.local import InMemoryStore
 from axonflow.messaging.base import MessageBus
 from axonflow.messaging.memory_bus import InMemoryMessageBus
 from axonflow.observability.execution_log import ExecutionLogger
 from axonflow.observability.logger import setup_logging
+from axonflow.platform.store import PlatformStore
+from axonflow.tools.archive_ops import ArchiveOpsTool
 from axonflow.tools.base import Tool, ToolRegistry
+from axonflow.tools.directory_tree import DirectoryTreeTool
+from axonflow.tools.env_vars import EnvVarsTool
 from axonflow.tools.file_ops import FileReadTool, FileWriteTool
+from axonflow.tools.file_patch import FilePatchTool
 from axonflow.tools.git_ops import GitOpsTool
 from axonflow.tools.http_request import HttpRequestTool
-from axonflow.tools.shell_exec import ShellExecTool
-from axonflow.tools.web_search import WebSearchTool
-from axonflow.tools.web_scrape import WebScrapeTool
-from axonflow.tools.text_search import TextSearchTool
-from axonflow.tools.python_eval import PythonEvalTool
 from axonflow.tools.json_query import JsonQueryTool
-from axonflow.tools.directory_tree import DirectoryTreeTool
-from axonflow.tools.file_patch import FilePatchTool
-from axonflow.tools.env_vars import EnvVarsTool
-from axonflow.tools.archive_ops import ArchiveOpsTool
 from axonflow.tools.process_manager import ProcessManagerTool
+from axonflow.tools.python_eval import PythonEvalTool
+from axonflow.tools.shell_exec import ShellExecTool
+from axonflow.tools.text_search import TextSearchTool
+from axonflow.tools.web_scrape import WebScrapeTool
+from axonflow.tools.web_search import WebSearchTool
 
 logger = structlog.get_logger()
 
@@ -58,9 +62,11 @@ class AxonFlowEngine:
         self,
         config_dir: str = "config",
         config: AxonFlowConfig | None = None,
+        platform_store: PlatformStore | None = None,
     ) -> None:
         self._config_dir = Path(config_dir)
         self._config = config
+        self._platform_store = platform_store
         self._message_bus: MessageBus | None = None
         self._llm_gateway: LLMGateway | None = None
         self._tool_registry: ToolRegistry | None = None
@@ -115,6 +121,10 @@ class AxonFlowEngine:
         self._llm_gateway = LLMGateway(
             default_model=self.config.default_model,
             token_budget=self.config.token_budget,
+            credential_resolver=(
+                self._platform_store.resolve_credential if self._platform_store else None
+            ),
+            span_store=self._platform_store,
         )
 
         # 5. 注册内置工具
@@ -144,11 +154,25 @@ class AxonFlowEngine:
         self._initialized = True
         logger.info("engine.initialized")
 
+    async def start_workflow_trace(self, run_id: str, workflow_id: str, input_data: str) -> None:
+        if self._llm_gateway is not None:
+            await self._llm_gateway.start_workflow_trace(run_id, workflow_id, input_data)
+
+    async def finish_workflow_trace(
+        self,
+        run_id: str,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> None:
+        if self._llm_gateway is not None:
+            await self._llm_gateway.finish_workflow_trace(run_id, result=result, error=error)
+
     async def _create_message_bus(self) -> MessageBus:
         """创建消息总线（尝试 Redis，失败则降级到内存）"""
         try:
-            from axonflow.messaging.redis_bus import RedisMessageBus
             import redis.asyncio as aioredis
+
+            from axonflow.messaging.redis_bus import RedisMessageBus
 
             bus = RedisMessageBus(self.config.redis.url)
             await bus.start()
@@ -234,25 +258,34 @@ class AxonFlowEngine:
         assert self._tool_registry is not None
 
         agents_dir = self._config_dir / "agents"
-        skills_dir = self._config_dir / "skills"
         agent_configs = load_all_agent_configs(agents_dir)
 
         for cfg in agent_configs:
-            agent = create_agent(
-                config=cfg,
-                message_bus=self._message_bus,
-                llm_gateway=self._llm_gateway,
-                tool_registry=self._tool_registry,
-                memory_store=self._memory_store,
-                execution_logger=self._execution_logger,
-                skills_dir=skills_dir,
-            )
-            self._agent_registry.register(agent)
+            await self.add_agent(cfg, start_immediately=False)
 
         logger.info(
             "engine.agents_loaded",
             count=len(agent_configs),
         )
+
+    async def add_agent(self, config: AgentConfig, start_immediately: bool = True) -> None:
+        """Register an Agent created from the UI without requiring an engine restart."""
+        assert self._agent_registry is not None
+        assert self._message_bus is not None
+        assert self._llm_gateway is not None
+        assert self._tool_registry is not None
+        agent = create_agent(
+            config=config,
+            message_bus=self._message_bus,
+            llm_gateway=self._llm_gateway,
+            tool_registry=self._tool_registry,
+            memory_store=self._memory_store,
+            execution_logger=self._execution_logger,
+            skills_dir=self._config_dir / "skills",
+        )
+        self._agent_registry.register(agent)
+        if start_immediately and self._running:
+            self._agent_tasks.append(asyncio.create_task(agent.start()))
 
     def _load_cron_jobs(self) -> None:
         """从工作流配置中加载 Cron 任务"""
@@ -318,7 +351,12 @@ class AxonFlowEngine:
 
         logger.info("engine.stopped")
 
-    async def run_workflow(self, workflow_id: str, input_data: str) -> WorkflowResult:
+    async def run_workflow(
+        self,
+        workflow_id: str,
+        input_data: str,
+        event_callback: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> WorkflowResult:
         """执行指定工作流"""
         workflows_dir = self._config_dir / "workflows"
         workflow_configs = load_all_workflow_configs(workflows_dir)
@@ -335,14 +373,125 @@ class AxonFlowEngine:
         assert self._agent_registry is not None
         assert self._message_bus is not None
 
+        execution_config = self._scope_agent_instances(wf_config)
+        execution_registry, execution_agents = self._create_execution_agents(execution_config)
+        execution_tasks = [asyncio.create_task(agent.start()) for agent in execution_agents]
+
         orchestrator = create_orchestrator(
-            config=wf_config,
-            agent_registry=self._agent_registry,
+            config=execution_config,
+            agent_registry=execution_registry,
             message_bus=self._message_bus,
             llm_gateway=self._llm_gateway,
+            event_callback=event_callback,
         )
+        try:
+            return await orchestrator.execute(input_data)
+        finally:
+            for agent in execution_agents:
+                await agent.stop()
+            for task in execution_tasks:
+                task.cancel()
+            if execution_tasks:
+                await asyncio.gather(*execution_tasks, return_exceptions=True)
 
-        return await orchestrator.execute(input_data)
+    def _scope_agent_instances(self, config: WorkflowConfig) -> WorkflowConfig:
+        """Give workflow entities a unique message identity for each execution."""
+        if not config.agent_instances:
+            return config
+
+        scoped = config.model_copy(deep=True)
+        namespace = f"run-{uuid.uuid4().hex[:12]}"
+        identifiers = {
+            instance.id: f"{namespace}--{instance.id}" for instance in scoped.agent_instances
+        }
+        scoped.agent_instances = [
+            instance.model_copy(update={"id": identifiers[instance.id]})
+            for instance in scoped.agent_instances
+        ]
+        scoped.agents = [identifiers.get(agent_id, agent_id) for agent_id in scoped.agents]
+        scoped.flow.entry = identifiers.get(scoped.flow.entry, scoped.flow.entry)
+        scoped.flow.routes = {
+            identifiers.get(source, source): [
+                Route(
+                    target=identifiers.get(route.target, route.target),
+                    condition=route.condition,
+                )
+                for route in routes
+            ]
+            for source, routes in scoped.flow.routes.items()
+        }
+        scoped.flow.terminate_on = [
+            {
+                **condition,
+                "agent": identifiers.get(condition.get("agent"), condition.get("agent")),
+            }
+            for condition in scoped.flow.terminate_on
+        ]
+        scoped.flow.join = {
+            identifiers.get(target, target): join.model_copy(
+                update={
+                    "wait_for": [
+                        identifiers.get(agent_id, agent_id) for agent_id in join.wait_for
+                    ]
+                }
+            )
+            for target, join in scoped.flow.join.items()
+        }
+        if scoped.flow.supervisor:
+            supervisor_id = scoped.flow.supervisor.agent_id
+            scoped.flow.supervisor = scoped.flow.supervisor.model_copy(
+                update={"agent_id": identifiers.get(supervisor_id, supervisor_id)}
+            )
+        overrides = scoped.context.get("agent_role_overrides")
+        if isinstance(overrides, dict):
+            scoped.context["agent_role_overrides"] = {
+                identifiers.get(agent_id, agent_id): value
+                for agent_id, value in overrides.items()
+            }
+        return scoped
+
+    def _create_execution_agents(
+        self, config: WorkflowConfig
+    ) -> tuple[AgentRegistry, list]:
+        """Instantiate workflow entities from their reusable Agent templates."""
+        assert self._agent_registry is not None
+        assert self._message_bus is not None
+        assert self._llm_gateway is not None
+        assert self._tool_registry is not None
+        if not config.agent_instances:
+            return self._agent_registry, []
+
+        registry = AgentRegistry()
+        execution_agents = []
+        for instance in config.agent_instances:
+            template = self._agent_registry.get(instance.template_id)
+            if template is None:
+                raise ValueError(f"Agent template not found: {instance.template_id}")
+
+            entity_config = template.config.model_copy(deep=True)
+            entity_config.id = instance.id
+            entity_config.name = instance.name
+            if instance.model_profile_id:
+                if self._platform_store is None:
+                    raise ValueError("Model profile support requires a platform store")
+                profile = self._platform_store.get_model_profile(instance.model_profile_id)
+                if profile is None:
+                    raise ValueError(f"Model profile not found: {instance.model_profile_id}")
+                entity_config.model = ModelConfig.model_validate(profile["config"])
+                entity_config.parameters["model_profile_id"] = instance.model_profile_id
+
+            entity = create_agent(
+                config=entity_config,
+                message_bus=self._message_bus,
+                llm_gateway=self._llm_gateway,
+                tool_registry=self._tool_registry,
+                memory_store=self._memory_store,
+                execution_logger=self._execution_logger,
+                skills_dir=self._config_dir / "skills",
+            )
+            registry.register(entity)
+            execution_agents.append(entity)
+        return registry, execution_agents
 
     async def _scheduled_run(self, workflow_id: str, input_data: str) -> None:
         """调度器回调 — 执行工作流"""

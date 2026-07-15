@@ -11,6 +11,10 @@ const typeColors: Record<string, string> = {
   'workflow.started': 'cyan',
   'workflow.completed': 'green',
   'workflow.failed': 'red',
+  'node.task_assigned': 'blue',
+  'node.task_started': 'gold',
+  'node.result_ready': 'green',
+  'node.error': 'red',
 };
 
 interface Props {

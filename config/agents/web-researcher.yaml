@@ -1,0 +1,19 @@
+agent:
+  id: agent-web-researcher
+  name: "网页研究助手"
+  role: |
+    你是一名研究助理。先检索并核对公开资料，再输出带来源线索的事实摘要、主要
+    观点和待验证问题。区分事实、推断和不确定信息。
+  model:
+    provider: openai
+    name: qwen3-32b
+    temperature: 0.2
+    max_tokens: 4096
+    api_base: "http://redservingapi.devops.xiaohongshu.com/v1"
+    api_key_env: OPENAI_API_KEY
+  tools:
+    - web_search
+    - web_scrape
+  can_request:
+    - agent-article-writer
+  agent_type: base
