@@ -47,10 +47,27 @@ interface AgentNodeData {
   terminateOnSuccess: boolean;
 }
 
+const connectorStyle = {
+  width: 24,
+  height: 24,
+  background: '#1677ff',
+  border: '3px solid #fff',
+  borderRadius: '50%',
+  boxShadow: '0 1px 5px rgba(0, 80, 179, 0.45)',
+  cursor: 'crosshair',
+  zIndex: 2,
+};
+
 function AgentNode({ data }: NodeProps<AgentNodeData>) {
   return (
-    <div style={{ minWidth: 170, border: '1px solid #91caff', borderRadius: 6, background: '#fff', overflow: 'hidden' }}>
-      <Handle type="target" position={Position.Left} />
+    <div style={{ minWidth: 170, border: '1px solid #91caff', borderRadius: 6, background: '#fff', overflow: 'visible' }}>
+      <Handle
+        id="input"
+        type="target"
+        position={Position.Left}
+        title="Drag a connection into this Agent"
+        style={{ ...connectorStyle, left: -12 }}
+      />
       <div style={{ padding: '8px 10px', background: '#e6f4ff', color: '#0050b3', fontWeight: 600, fontSize: 13 }}>
         {data.label}
       </div>
@@ -64,7 +81,13 @@ function AgentNode({ data }: NodeProps<AgentNodeData>) {
           {data.responsibility.length > 84 ? `${data.responsibility.slice(0, 84)}...` : data.responsibility}
         </div>
       )}
-      <Handle type="source" position={Position.Right} />
+      <Handle
+        id="output"
+        type="source"
+        position={Position.Right}
+        title="Drag from here to the next Agent"
+        style={{ ...connectorStyle, right: -12 }}
+      />
     </div>
   );
 }
