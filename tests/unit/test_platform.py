@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
-
 from axonflow.config.models import FlowConfig, ModelConfig, Route, RouteCondition, WorkflowConfig
+from axonflow.engine import AxonFlowEngine
 from axonflow.llm.gateway import LLMGateway
 from axonflow.llm.providers import resolve_model_name
 from axonflow.platform.models import PlatformWorkflow, WorkflowNode
@@ -34,20 +33,53 @@ def test_runtime_config_projects_to_visual_graph_and_back() -> None:
 
     assert workflow.nodes[0].is_entry is True
     assert workflow.edges[0].condition is not None
-    assert restored.flow.entry == "researcher"
-    assert restored.flow.routes["researcher"][0].target == "writer"
+    assert restored.flow.entry == "research-flow--node-researcher"
+    assert restored.flow.routes["research-flow--node-researcher"][0].target == (
+        "research-flow--node-writer"
+    )
 
 
-def test_visual_graph_rejects_duplicate_agents() -> None:
-    with pytest.raises(ValueError, match="only once"):
-        PlatformWorkflow(
-            id="invalid",
-            name="Invalid",
-            nodes=[
-                WorkflowNode(id="a", agent_id="writer", label="Writer", is_entry=True),
-                WorkflowNode(id="b", agent_id="writer", label="Writer again"),
-            ],
-        )
+def test_visual_graph_projects_duplicate_templates_as_distinct_entities() -> None:
+    workflow = PlatformWorkflow(
+        id="review-flow",
+        name="Review flow",
+        nodes=[
+            WorkflowNode(
+                id="draft",
+                agent_id="writer",
+                label="Draft writer",
+                is_entry=True,
+                config={"responsibility": "Write the first draft."},
+            ),
+            WorkflowNode(
+                id="revision",
+                agent_id="writer",
+                label="Revision writer",
+                config={
+                    "responsibility": "Rewrite after review feedback.",
+                    "model_profile_id": "profile-fast",
+                    "terminate_on_success": True,
+                },
+            ),
+        ],
+        edges=[{"id": "draft-to-revision", "source": "draft", "target": "revision"}],
+    )
+
+    runtime = workflow.to_workflow_config()
+    scoped = AxonFlowEngine()._scope_agent_instances(runtime)
+    restored = PlatformWorkflow.from_workflow_config(runtime)
+
+    assert [instance.template_id for instance in runtime.agent_instances] == ["writer", "writer"]
+    assert runtime.agent_instances[0].id != runtime.agent_instances[1].id
+    assert runtime.flow.routes[runtime.agent_instances[0].id][0].target == (
+        runtime.agent_instances[1].id
+    )
+    assert runtime.context["agent_role_overrides"][runtime.agent_instances[1].id] == (
+        "Rewrite after review feedback."
+    )
+    assert scoped.agent_instances[0].id != runtime.agent_instances[0].id
+    assert scoped.agent_instances[0].id != scoped.agent_instances[1].id
+    assert restored.nodes[1].config["model_profile_id"] == "profile-fast"
 
 
 def test_workflow_node_responsibility_projects_to_runtime_context() -> None:
@@ -68,7 +100,7 @@ def test_workflow_node_responsibility_projects_to_runtime_context() -> None:
     runtime = workflow.to_workflow_config()
     restored = PlatformWorkflow.from_workflow_config(runtime)
 
-    assert runtime.context["agent_role_overrides"]["writer"] == (
+    assert runtime.context["agent_role_overrides"]["content-flow--node-writer"] == (
         "Draft a concise first version for the reviewer."
     )
     assert restored.nodes[0].config["responsibility"] == (
@@ -102,8 +134,8 @@ def test_workflow_end_node_projects_to_runtime_termination() -> None:
     restored = PlatformWorkflow.from_workflow_config(runtime)
 
     assert {tuple(condition.items()) for condition in runtime.flow.terminate_on} == {
-        (("agent", "writer"), ("status", "error")),
-        (("agent", "reviewer"), ("status", "success")),
+        (("agent", "review-flow--node-writer"), ("status", "error")),
+        (("agent", "review-flow--node-reviewer"), ("status", "success")),
     }
     assert restored.nodes[1].config["terminate_on_success"] is True
 

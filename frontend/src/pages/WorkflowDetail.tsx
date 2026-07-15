@@ -3,7 +3,13 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Button, Input, Modal, Space, Spin, Table, Tag, Typography, message } from 'antd';
 import { PlayCircleOutlined, SaveOutlined } from '@ant-design/icons';
 import WorkflowBuilder from '../components/WorkflowBuilder';
-import type { AgentManifest, PlatformEdge, PlatformNode, WorkflowBuilderHandle } from '../components/WorkflowBuilder';
+import type {
+  AgentManifest,
+  ModelProfile,
+  PlatformEdge,
+  PlatformNode,
+  WorkflowBuilderHandle,
+} from '../components/WorkflowBuilder';
 import { fetchApi } from '../api/client';
 
 interface Workflow {
@@ -34,6 +40,7 @@ export default function WorkflowDetail() {
   const navigate = useNavigate();
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [agents, setAgents] = useState<AgentManifest[]>([]);
+  const [modelProfiles, setModelProfiles] = useState<ModelProfile[]>([]);
   const [runs, setRuns] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -46,11 +53,13 @@ export default function WorkflowDetail() {
     Promise.all([
       fetchApi<Workflow>(`/api/workflows/${id}`),
       fetchApi<AgentManifest[]>('/api/agents/manifests'),
+      fetchApi<ModelProfile[]>('/api/model-profiles'),
       fetchApi<any[]>(`/api/workflows/${id}/runs`),
     ])
-      .then(([definition, manifests, history]) => {
+      .then(([definition, manifests, profiles, history]) => {
         setWorkflow(definition);
         setAgents(manifests);
+        setModelProfiles(profiles);
         setRuns(history);
       })
       .catch((error) => message.error(error.message))
@@ -108,6 +117,7 @@ export default function WorkflowDetail() {
         initialNodes={workflow.nodes}
         initialEdges={workflow.edges}
         agents={agents}
+        modelProfiles={modelProfiles}
         ref={builderRef}
       />
 

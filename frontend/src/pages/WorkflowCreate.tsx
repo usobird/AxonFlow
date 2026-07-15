@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Form, Input, InputNumber, Spin, Typography, message } from 'antd';
 import { ArrowLeftOutlined, SaveOutlined } from '@ant-design/icons';
 import WorkflowBuilder from '../components/WorkflowBuilder';
-import type { AgentManifest, PlatformNode, WorkflowBuilderHandle } from '../components/WorkflowBuilder';
+import type { AgentManifest, ModelProfile, PlatformNode, WorkflowBuilderHandle } from '../components/WorkflowBuilder';
 import { fetchApi } from '../api/client';
 
 interface WorkflowCreateValues {
@@ -27,14 +27,21 @@ function completionConditions(nodes: PlatformNode[]) {
 export default function WorkflowCreate() {
   const navigate = useNavigate();
   const [agents, setAgents] = useState<AgentManifest[]>([]);
+  const [modelProfiles, setModelProfiles] = useState<ModelProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm<WorkflowCreateValues>();
   const builderRef = useRef<WorkflowBuilderHandle>(null);
 
   useEffect(() => {
-    fetchApi<AgentManifest[]>('/api/agents/manifests')
-      .then(setAgents)
+    Promise.all([
+      fetchApi<AgentManifest[]>('/api/agents/manifests'),
+      fetchApi<ModelProfile[]>('/api/model-profiles'),
+    ])
+      .then(([manifests, profiles]) => {
+        setAgents(manifests);
+        setModelProfiles(profiles);
+      })
       .catch((error: Error) => message.error(error.message))
       .finally(() => setLoading(false));
   }, []);
@@ -117,7 +124,13 @@ export default function WorkflowCreate() {
         </Form.Item>
       </Form>
 
-      <WorkflowBuilder initialNodes={[]} initialEdges={[]} agents={agents} ref={builderRef} />
+      <WorkflowBuilder
+        initialNodes={[]}
+        initialEdges={[]}
+        agents={agents}
+        modelProfiles={modelProfiles}
+        ref={builderRef}
+      />
     </>
   );
 }

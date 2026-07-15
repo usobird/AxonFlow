@@ -23,6 +23,12 @@ export interface AgentManifest {
   model?: string;
 }
 
+export interface ModelProfile {
+  id: string;
+  name: string;
+  config: { provider: string; name: string };
+}
+
 export interface PlatformNode {
   id: string;
   agent_id: string;
@@ -45,6 +51,7 @@ interface AgentNodeData {
   isEntry: boolean;
   responsibility: string;
   terminateOnSuccess: boolean;
+  modelProfileId: string;
 }
 
 const connectorStyle = {
@@ -107,6 +114,7 @@ function toFlowNodes(nodes: PlatformNode[], agents: AgentManifest[] = []): Node<
       isEntry: node.is_entry,
       responsibility: typeof node.config?.responsibility === 'string' ? node.config.responsibility : '',
       terminateOnSuccess: node.config?.terminate_on_success === true,
+      modelProfileId: typeof node.config?.model_profile_id === 'string' ? node.config.model_profile_id : '',
     },
   }));
 }
@@ -131,6 +139,7 @@ function toPlatformNodes(nodes: Node<AgentNodeData>[]): PlatformNode[] {
     is_entry: node.data.isEntry,
     config: {
       ...(node.data.responsibility.trim() ? { responsibility: node.data.responsibility.trim() } : {}),
+      ...(node.data.modelProfileId ? { model_profile_id: node.data.modelProfileId } : {}),
       terminate_on_success: node.data.terminateOnSuccess,
     },
   }));
@@ -149,6 +158,7 @@ interface Props {
   initialNodes: PlatformNode[];
   initialEdges: PlatformEdge[];
   agents: AgentManifest[];
+  modelProfiles?: ModelProfile[];
 }
 
 export interface WorkflowBuilderHandle {
@@ -156,7 +166,7 @@ export interface WorkflowBuilderHandle {
 }
 
 const WorkflowBuilder = forwardRef<WorkflowBuilderHandle, Props>(function WorkflowBuilder(
-  { initialNodes, initialEdges, agents },
+  { initialNodes, initialEdges, agents, modelProfiles = [] },
   ref,
 ) {
   const [nodes, setNodes] = useState<Node<AgentNodeData>[]>(() => toFlowNodes(initialNodes, agents));
@@ -256,8 +266,8 @@ const WorkflowBuilder = forwardRef<WorkflowBuilderHandle, Props>(function Workfl
     const agentId = event.dataTransfer.getData('application/axonflow-agent');
     const agent = agents.find((item) => item.id === agentId);
     const bounds = canvasRef.current?.getBoundingClientRect();
-    if (!agent || !bounds || nodes.some((node) => node.data.agentId === agent.id)) return;
-    const id = `node-${agent.id}`;
+    if (!agent || !bounds) return;
+    const id = `node-${agent.id}-${crypto.randomUUID().slice(0, 8)}`;
     const nextNode: Node<AgentNodeData> = {
       id,
       type: 'agent',
@@ -268,6 +278,7 @@ const WorkflowBuilder = forwardRef<WorkflowBuilderHandle, Props>(function Workfl
         isEntry: nodes.length === 0,
         responsibility: '',
         terminateOnSuccess: true,
+        modelProfileId: '',
       },
     };
     const next = [...nodes, nextNode];
@@ -302,7 +313,7 @@ const WorkflowBuilder = forwardRef<WorkflowBuilderHandle, Props>(function Workfl
     <div style={{ overflowX: 'auto', border: '1px solid #d9d9d9', background: '#fff' }}>
       <div style={{ height: 640, minWidth: 720, display: 'grid', gridTemplateColumns: '220px minmax(0, 1fr) 260px' }}>
       <aside style={{ borderRight: '1px solid #f0f0f0', padding: 14, overflowY: 'auto' }}>
-        <Typography.Text strong>Agent Library</Typography.Text>
+        <Typography.Text strong>Agent Templates</Typography.Text>
         <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
           {agents.map((agent) => (
             <div
@@ -352,17 +363,29 @@ const WorkflowBuilder = forwardRef<WorkflowBuilderHandle, Props>(function Workfl
           <div style={{ display: 'grid', gap: 12 }}>
             <Typography.Text strong>Node Settings</Typography.Text>
             <div>
-              <Typography.Text type="secondary">Agent</Typography.Text>
+              <Typography.Text type="secondary">Agent template</Typography.Text>
               <Select
                 style={{ width: '100%', marginTop: 4 }}
                 value={selectedNode.data.agentId}
-                options={agents
-                  .filter((agent) => agent.id === selectedNode.data.agentId || !nodes.some((node) => node.data.agentId === agent.id))
-                  .map((agent) => ({ value: agent.id, label: agent.name }))}
+                options={agents.map((agent) => ({ value: agent.id, label: agent.name }))}
                 onChange={(agentId) => {
                   const agent = agents.find((item) => item.id === agentId);
                   updateNode({ agentId, label: agent?.name || agentId });
                 }}
+              />
+            </div>
+            <div>
+              <Typography.Text type="secondary">Model profile</Typography.Text>
+              <Select
+                allowClear
+                style={{ width: '100%', marginTop: 4 }}
+                value={selectedNode.data.modelProfileId || undefined}
+                placeholder="Use template model"
+                options={modelProfiles.map((profile) => ({
+                  value: profile.id,
+                  label: `${profile.name} (${profile.config.provider}/${profile.config.name})`,
+                }))}
+                onChange={(modelProfileId) => updateNode({ modelProfileId: modelProfileId || '' })}
               />
             </div>
             <div>

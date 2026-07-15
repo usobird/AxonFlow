@@ -92,6 +92,16 @@ class AgentConfig(BaseModel):
     skills: list[str] = Field(default_factory=list)  # 关联的 skill 名称列表
 
 
+class AgentInstanceConfig(BaseModel):
+    """A workflow-scoped Agent entity that reuses an AgentConfig template."""
+
+    id: str
+    node_id: str
+    template_id: str
+    name: str
+    model_profile_id: str | None = None
+
+
 # ============================================================
 # 工作流配置
 # ============================================================
@@ -176,6 +186,7 @@ class WorkflowConfig(BaseModel):
     extends: str | None = None  # 继承基础工作流模板 ID
     trigger: TriggerConfig = Field(default_factory=TriggerConfig)
     agents: list[str] = Field(default_factory=list)
+    agent_instances: list[AgentInstanceConfig] = Field(default_factory=list)
     flow: FlowConfig
     context: dict[str, Any] = Field(default_factory=dict)
 
